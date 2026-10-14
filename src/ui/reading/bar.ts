@@ -36,8 +36,6 @@ export interface BarActions {
   jump(): void;
   resume(): void;
   stop(): void;
-  toggleFavorite(): void;
-  isFavorite(): boolean;
   hasPrev(): boolean;
   hasNext(): boolean;
   /** Paragraph count of the target note (from cache when it is not the loaded one). */
@@ -72,9 +70,6 @@ export function createBar(player: PlayerService, path: string, a: BarActions): B
     return b;
   };
 
-  const head = card.createDiv("rf-dock-head");
-  const status = head.createSpan({ cls: "rf-dock-status" });
-  btn(head, "rf-dock-close", "x", "收起", () => setOpen(false));
   const title = card.createDiv({ cls: "rf-dock-title" });
   title.addEventListener("click", () => {
     if (a.info().elsewhere) a.jump();
@@ -88,16 +83,14 @@ export function createBar(player: PlayerService, path: string, a: BarActions): B
   const play = btn(ctrl, "rf-bar-play", "play", "播放／暫停", () => a.toggle());
   const nextPara = btn(ctrl, "rf-bar-next", "chevron-right", "下一段", () => a.nextPara());
   const nextNote = btn(ctrl, "rf-bar-next-note", "skip-forward", "下一篇", () => a.nextNote());
+  const more = btn(ctrl, "rf-bar-more", "more-horizontal", "更多", () => undefined);
 
+  // Only while another note is playing.
   const extra = card.createDiv("rf-dock-extra");
-  const fav = btn(extra, "rf-bar-fav", "bookmark", "收藏", () => a.toggleFavorite());
-  const more = btn(extra, "rf-bar-more", "more-horizontal", "更多", () => undefined);
   const here = extra.createEl("button", { cls: "rf-dock-text", text: "播放這篇" });
   here.addEventListener("click", () => a.playHere());
   const jump = extra.createEl("button", { cls: "rf-dock-text rf-dock-jump", text: "跳到該篇 ›" });
   jump.addEventListener("click", () => a.jump());
-  const back = card.createEl("button", { cls: "rf-dock-resume", text: "回到朗讀位置" });
-  back.addEventListener("click", () => a.resume());
 
   more.addEventListener("click", (e) => {
     const m = new Menu();
@@ -108,6 +101,9 @@ export function createBar(player: PlayerService, path: string, a: BarActions): B
     m.addItem((i) =>
       i.setTitle("跟隨捲動").setChecked(player.followState.enabled).onClick(() => player.setFollowEnabled(!player.followState.enabled)),
     );
+    if (player.notePath === path && showResume(player.followState)) {
+      m.addItem((i) => i.setTitle("回到朗讀位置").setIcon("locate").onClick(() => a.resume()));
+    }
     m.addItem((i) => i.setTitle("停止").setIcon("square").onClick(() => a.stop()));
     m.showAtMouseEvent(e);
   });
@@ -183,7 +179,6 @@ export function createBar(player: PlayerService, path: string, a: BarActions): B
   // ---- state ----
   let lastIcon = "";
   const update = () => {
-    const mine = player.notePath === path;
     const target = player.notePath !== null;
     const icon = player.playing ? "pause" : "play";
     if (icon !== lastIcon) {
@@ -193,9 +188,6 @@ export function createBar(player: PlayerService, path: string, a: BarActions): B
     bubble.toggleClass("is-playing", player.playing);
     el.toggleClass("is-open", cardOpen);
     const info = a.info();
-    status.setText(player.playing ? "正在播放" : target ? "已暫停" : "未播放");
-    status.toggleClass("is-playing", player.playing);
-    if (info.elsewhere) status.appendText("（另一篇）");
     title.setText(info.title);
     title.toggleClass("is-link", info.elsewhere);
     const n = target ? player.paragraphs.length : a.count();
@@ -203,14 +195,11 @@ export function createBar(player: PlayerService, path: string, a: BarActions): B
     meta.setText(`段落 ${cur} / ${n} · ${player.speed}x`);
     snippet.setText(info.snippet);
     snippet.toggleClass("rf-hidden", info.snippet === "");
-    fav.toggleClass("is-active", a.isFavorite());
     prevNote.toggleClass("rf-disabled", !a.hasPrev());
     nextNote.toggleClass("rf-disabled", !a.hasNext());
     prevPara.toggleClass("rf-disabled", n === 0);
     nextPara.toggleClass("rf-disabled", n === 0);
-    here.toggleClass("rf-hidden", !info.elsewhere);
-    jump.toggleClass("rf-hidden", !info.elsewhere);
-    back.toggleClass("rf-hidden", !(mine && showResume(player.followState)));
+    extra.toggleClass("rf-hidden", !info.elsewhere);
     if (!drag) place();
   };
   update();

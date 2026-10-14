@@ -8,6 +8,13 @@ export function parseLineTimestamp(line: string): number | null {
   return m ? Number(m[1]) : null;
 }
 
+/** Nothing but parenthesised stage cues — "(Applause)", "(Laughter) (Music)" — once the marker is gone. */
+const CUE_ONLY = /^(?:\([^()]*\)\s*)+$/;
+
+export function isCueLine(line: string): boolean {
+  return CUE_ONLY.test(line.replace(TIMESTAMP, "").trim());
+}
+
 /**
  * Every timestamp in a note's raw text, with its 0-based line.
  * Skips the frontmatter and fenced code blocks (METHOD §1).
@@ -38,7 +45,8 @@ export function parseTimestamps(text: string): ParagraphTime[] {
     }
     if (fence !== null) continue;
     const start = parseLineTimestamp(line);
-    if (start !== null) out.push({ line: i, start });
+    if (start === null) continue;
+    out.push(isCueLine(line) ? { line: i, start, cue: true } : { line: i, start });
   }
   return out;
 }

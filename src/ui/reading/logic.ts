@@ -38,11 +38,6 @@ export function todayString(d: Date = new Date()): string {
   return `${d.getFullYear()}-${m}-${day}`;
 }
 
-/** Toggle membership, returning a new array. */
-export function toggleFavorite(list: readonly string[], key: string): string[] {
-  return list.includes(key) ? list.filter((k) => k !== key) : [...list, key];
-}
-
 /** Bubble centre (px inside a w×h view) → stored fractions, keeping the whole bubble (radius r) inside. */
 export function clampDock(px: number, py: number, w: number, h: number, r: number): DockPos {
   const fx = w > 2 * r ? (Math.min(w - r, Math.max(r, px)) - r) / (w - 2 * r) : 0.5;

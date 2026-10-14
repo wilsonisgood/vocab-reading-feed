@@ -63,9 +63,15 @@ export function showResume(s: FollowState): boolean {
   return s.enabled && s.suspended;
 }
 
-/** Paragraph to move to for prev (-1) / next (+1); clamped; -1 when the table is empty (METHOD §3.1). */
-export function stepIndex(cur: number, count: number, dir: -1 | 1): number {
-  if (count <= 0) return -1;
-  if (cur < 0) return 0;
-  return Math.min(count - 1, Math.max(0, cur + dir));
+/**
+ * Paragraph to move to for prev (-1) / next (+1), skipping cue-only paragraphs ("(Applause)");
+ * stays put (clamped) when there is none that way; -1 when the table is empty (METHOD §3.1).
+ */
+export function stepIndex(cur: number, times: readonly ParagraphTime[], dir: -1 | 1): number {
+  const n = times.length;
+  if (n <= 0) return -1;
+  for (let i = cur < 0 ? 0 : cur + dir; i >= 0 && i < n; i += dir) {
+    if (!times[i].cue) return i;
+  }
+  return Math.min(n - 1, Math.max(0, cur));
 }

@@ -128,6 +128,13 @@ describe("parseLineTimestamp / readRfKey", () => {
   });
 });
 
+describe("cue-only paragraphs", () => {
+  it("flags pure stage cues, not lines that also have speech", () => {
+    const text = "(Applause) %%rf:1%%\n\n(Laughter) (Music) %%rf:2%%\n\n(Laughter) So I said no. %%rf:3%%\n\nPlain. %%rf:4%%\n";
+    expect(parseTimestamps(text).map((t) => t.cue ?? false)).toEqual([true, true, false, false]);
+  });
+});
+
 describe("timestamp ordinal survives frontmatter reflow", () => {
   const body = "Hello there. %%rf:1.5%%\n\nSecond one. %%rf:9%%\n";
   const before = "---\nrf-source: ted\ntopics: [a, b]\n---\n\n" + body;

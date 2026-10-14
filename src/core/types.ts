@@ -47,6 +47,8 @@ export interface Talk {
 export interface ParagraphTime {
   line: number;
   start: number;
+  /** Paragraph is only stage cues like "(Applause)"; prev / next paragraph skip it (METHOD §3.1). Set only when true. */
+  cue?: boolean;
 }
 
 /** Bumped when the md contract in METHOD §1 changes incompatibly. */

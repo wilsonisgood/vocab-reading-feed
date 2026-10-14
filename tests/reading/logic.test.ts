@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { cardSide, clampDock, neighborNote, sortNotes, todayString, toggleFavorite } from "../../src/ui/reading/logic";
+import { cardSide, clampDock, neighborNote, sortNotes, todayString } from "../../src/ui/reading/logic";
 
 const n = (name: string, published: unknown) => ({ path: `d/${name}`, name, published });
 
@@ -21,12 +21,8 @@ describe("sortNotes / neighborNote", () => {
   });
 });
 
-describe("todayString / toggleFavorite", () => {
+describe("todayString", () => {
   it("pads local date", () => expect(todayString(new Date(2026, 0, 5))).toBe("2026-01-05"));
-  it("toggles", () => {
-    expect(toggleFavorite(["a"], "b")).toEqual(["a", "b"]);
-    expect(toggleFavorite(["a", "b"], "a")).toEqual(["b"]);
-  });
 });
 
 describe("dock position", () => {

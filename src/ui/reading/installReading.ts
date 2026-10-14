@@ -1,5 +1,5 @@
 // Reading-mode glue (METHOD §3): ▶ per paragraph, playback bar, follow-scroll.
-import { MarkdownView, Platform, TFile, type App, type EventRef, type Plugin, type MarkdownPostProcessorContext } from "obsidian";
+import { MarkdownView, Platform, TFile, type App, type Plugin, type MarkdownPostProcessorContext } from "obsidian";
 import type { HttpPort } from "../../core/ports";
 import { RF_READ_KEY, type ParagraphTime, type ReadingFeedSettings } from "../../core/types";
 import { parseTimestamps, readRfKey, timestampTexts } from "../../core/note/parse";
@@ -7,9 +7,7 @@ import { PlayerService } from "../../services/player/PlayerService";
 import { attachHls } from "../../services/player/hlsAttach";
 import { loadedKey } from "../../core/browser/logic";
 import { createBar, type Bar, type BarActions } from "./bar";
-import { neighborNote, toggleFavorite, todayString, type NoteRef } from "./logic";
-
-const FAV_EVENT = "reading-feed:favorites-changed";
+import { neighborNote, todayString, type NoteRef } from "./logic";
 
 interface NoteInfo {
   mtime: number;
@@ -140,11 +138,6 @@ export function installReading(
     void view.leaf.openFile(target);
   }
 
-  function favKey(file: TFile | null): string | null {
-    const k = readRfKey(rfFm(file) ?? undefined);
-    return k ? loadedKey(k.source, k.id) : null;
-  }
-
   function fileAt(path: string | null): TFile | null {
     const f = path === null ? null : app.vault.getAbstractFileByPath(path);
     return f instanceof TFile ? f : null;
@@ -200,18 +193,6 @@ export function installReading(
         syncView(true);
       },
       stop: () => player.stop(),
-      toggleFavorite: () => {
-        const key = favKey(targetFile(view));
-        if (!key) return;
-        const s = getSettings();
-        s.favorites = toggleFavorite(s.favorites, key);
-        void saveSettings?.();
-        app.workspace.trigger(FAV_EVENT);
-      },
-      isFavorite: () => {
-        const key = favKey(targetFile(view));
-        return key !== null && getSettings().favorites.includes(key);
-      },
       hasPrev: () => neighbor(-1) !== null,
       hasNext: () => neighbor(1) !== null,
       count: () => cache.get(targetFile(view)?.path ?? "")?.times.length ?? 0,
@@ -355,8 +336,6 @@ export function installReading(
       refreshBars();
     }),
   );
-  const favEvents = app.workspace as unknown as { on(name: string, cb: () => void): EventRef };
-  plugin.registerEvent(favEvents.on(FAV_EVENT, () => bars.forEach((b) => b.bar.update())));
   plugin.registerEvent(app.workspace.on("active-leaf-change", () => { warm(); refreshBars(); }));
   plugin.registerEvent(app.workspace.on("layout-change", refreshBars));
 

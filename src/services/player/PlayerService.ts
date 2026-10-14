@@ -164,7 +164,7 @@ export class PlayerService {
 
   /** Previous / next paragraph (-1 / +1): continues playing when playing, else only moves the position. */
   step(dir: -1 | 1): void {
-    const next = stepIndex(this.idx, this.times.length, dir);
+    const next = stepIndex(this.idx, this.times, dir);
     if (next >= 0) this.seekTo(next);
   }
 

@@ -52,11 +52,22 @@ describe("follow state machine", () => {
 
 describe("stepIndex", () => {
   it("clamps and handles empty / before-first", () => {
-    expect(stepIndex(-1, 3, -1)).toBe(0);
-    expect(stepIndex(-1, 3, 1)).toBe(0);
-    expect(stepIndex(0, 3, -1)).toBe(0);
-    expect(stepIndex(2, 3, 1)).toBe(2);
-    expect(stepIndex(1, 3, 1)).toBe(2);
-    expect(stepIndex(0, 0, 1)).toBe(-1);
+    const three = [0, 1, 2].map((i) => ({ line: i, start: i }));
+    expect(stepIndex(-1, three, -1)).toBe(0);
+    expect(stepIndex(-1, three, 1)).toBe(0);
+    expect(stepIndex(0, three, -1)).toBe(0);
+    expect(stepIndex(2, three, 1)).toBe(2);
+    expect(stepIndex(1, three, 1)).toBe(2);
+    expect(stepIndex(0, [], 1)).toBe(-1);
+  });
+  it("skips cue-only paragraphs", () => {
+    const t = [{ line: 0, start: 0, cue: true }, { line: 1, start: 1 }, { line: 2, start: 2, cue: true }, { line: 3, start: 3 }, { line: 4, start: 4, cue: true }];
+    expect(stepIndex(-1, t, 1)).toBe(1);
+    expect(stepIndex(1, t, 1)).toBe(3);
+    expect(stepIndex(3, t, -1)).toBe(1);
+    expect(stepIndex(2, t, -1)).toBe(1); // playing through the applause
+    expect(stepIndex(2, t, 1)).toBe(3);
+    expect(stepIndex(3, t, 1)).toBe(3); // only cues left: stay
+    expect(stepIndex(1, t, -1)).toBe(1);
   });
 });

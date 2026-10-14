@@ -229,6 +229,10 @@ function parseLineTimestamp(line) {
   const m = TIMESTAMP.exec(line);
   return m ? Number(m[1]) : null;
 }
+var CUE_ONLY = /^(?:\([^()]*\)\s*)+$/;
+function isCueLine(line) {
+  return CUE_ONLY.test(line.replace(TIMESTAMP, "").trim());
+}
 function parseTimestamps(text) {
   var _a;
   const lines = text.split(/\r?\n/);
@@ -256,7 +260,8 @@ function parseTimestamps(text) {
     }
     if (fence !== null) continue;
     const start = parseLineTimestamp(line);
-    if (start !== null) out.push({ line: i, start });
+    if (start === null) continue;
+    out.push(isCueLine(line) ? { line: i, start, cue: true } : { line: i, start });
   }
   return out;
 }
@@ -1082,10 +1087,13 @@ function shouldFollow(s) {
 function showResume(s) {
   return s.enabled && s.suspended;
 }
-function stepIndex(cur, count, dir) {
-  if (count <= 0) return -1;
-  if (cur < 0) return 0;
-  return Math.min(count - 1, Math.max(0, cur + dir));
+function stepIndex(cur, times, dir) {
+  const n = times.length;
+  if (n <= 0) return -1;
+  for (let i = cur < 0 ? 0 : cur + dir; i >= 0 && i < n; i += dir) {
+    if (!times[i].cue) return i;
+  }
+  return Math.min(n - 1, Math.max(0, cur));
 }
 
 // src/services/player/PlayerService.ts
@@ -1204,7 +1212,7 @@ var PlayerService = class {
   }
   /** Previous / next paragraph (-1 / +1): continues playing when playing, else only moves the position. */
   step(dir) {
-    const next = stepIndex(this.idx, this.times.length, dir);
+    const next = stepIndex(this.idx, this.times, dir);
     if (next >= 0) this.seekTo(next);
   }
   toggle() {
@@ -25043,9 +25051,6 @@ function todayString(d = /* @__PURE__ */ new Date()) {
   const day = String(d.getDate()).padStart(2, "0");
   return `${d.getFullYear()}-${m}-${day}`;
 }
-function toggleFavorite(list, key) {
-  return list.includes(key) ? list.filter((k) => k !== key) : [...list, key];
-}
 function clampDock(px, py, w, h, r) {
   const fx = w > 2 * r ? (Math.min(w - r, Math.max(r, px)) - r) / (w - 2 * r) : 0.5;
   const fy = h > 2 * r ? (Math.min(h - r, Math.max(r, py)) - r) / (h - 2 * r) : 0.5;
@@ -25075,9 +25080,6 @@ function createBar(player, path, a) {
     });
     return b;
   };
-  const head = card.createDiv("rf-dock-head");
-  const status2 = head.createSpan({ cls: "rf-dock-status" });
-  btn(head, "rf-dock-close", "x", "\u6536\u8D77", () => setOpen(false));
   const title = card.createDiv({ cls: "rf-dock-title" });
   title.addEventListener("click", () => {
     if (a.info().elsewhere) a.jump();
@@ -25090,15 +25092,12 @@ function createBar(player, path, a) {
   const play = btn(ctrl, "rf-bar-play", "play", "\u64AD\u653E\uFF0F\u66AB\u505C", () => a.toggle());
   const nextPara = btn(ctrl, "rf-bar-next", "chevron-right", "\u4E0B\u4E00\u6BB5", () => a.nextPara());
   const nextNote = btn(ctrl, "rf-bar-next-note", "skip-forward", "\u4E0B\u4E00\u7BC7", () => a.nextNote());
+  const more = btn(ctrl, "rf-bar-more", "more-horizontal", "\u66F4\u591A", () => void 0);
   const extra = card.createDiv("rf-dock-extra");
-  const fav = btn(extra, "rf-bar-fav", "bookmark", "\u6536\u85CF", () => a.toggleFavorite());
-  const more = btn(extra, "rf-bar-more", "more-horizontal", "\u66F4\u591A", () => void 0);
   const here = extra.createEl("button", { cls: "rf-dock-text", text: "\u64AD\u653E\u9019\u7BC7" });
   here.addEventListener("click", () => a.playHere());
   const jump = extra.createEl("button", { cls: "rf-dock-text rf-dock-jump", text: "\u8DF3\u5230\u8A72\u7BC7 \u203A" });
   jump.addEventListener("click", () => a.jump());
-  const back = card.createEl("button", { cls: "rf-dock-resume", text: "\u56DE\u5230\u6717\u8B80\u4F4D\u7F6E" });
-  back.addEventListener("click", () => a.resume());
   more.addEventListener("click", (e) => {
     const m = new import_obsidian4.Menu();
     for (const s of SPEEDS) {
@@ -25108,6 +25107,9 @@ function createBar(player, path, a) {
     m.addItem(
       (i) => i.setTitle("\u8DDF\u96A8\u6372\u52D5").setChecked(player.followState.enabled).onClick(() => player.setFollowEnabled(!player.followState.enabled))
     );
+    if (player.notePath === path && showResume(player.followState)) {
+      m.addItem((i) => i.setTitle("\u56DE\u5230\u6717\u8B80\u4F4D\u7F6E").setIcon("locate").onClick(() => a.resume()));
+    }
     m.addItem((i) => i.setTitle("\u505C\u6B62").setIcon("square").onClick(() => a.stop()));
     m.showAtMouseEvent(e);
   });
@@ -25177,7 +25179,6 @@ function createBar(player, path, a) {
   };
   let lastIcon = "";
   const update = () => {
-    const mine = player.notePath === path;
     const target = player.notePath !== null;
     const icon = player.playing ? "pause" : "play";
     if (icon !== lastIcon) {
@@ -25187,9 +25188,6 @@ function createBar(player, path, a) {
     bubble.toggleClass("is-playing", player.playing);
     el.toggleClass("is-open", cardOpen);
     const info = a.info();
-    status2.setText(player.playing ? "\u6B63\u5728\u64AD\u653E" : target ? "\u5DF2\u66AB\u505C" : "\u672A\u64AD\u653E");
-    status2.toggleClass("is-playing", player.playing);
-    if (info.elsewhere) status2.appendText("\uFF08\u53E6\u4E00\u7BC7\uFF09");
     title.setText(info.title);
     title.toggleClass("is-link", info.elsewhere);
     const n = target ? player.paragraphs.length : a.count();
@@ -25197,14 +25195,11 @@ function createBar(player, path, a) {
     meta.setText(`\u6BB5\u843D ${cur} / ${n} \xB7 ${player.speed}x`);
     snippet.setText(info.snippet);
     snippet.toggleClass("rf-hidden", info.snippet === "");
-    fav.toggleClass("is-active", a.isFavorite());
     prevNote.toggleClass("rf-disabled", !a.hasPrev());
     nextNote.toggleClass("rf-disabled", !a.hasNext());
     prevPara.toggleClass("rf-disabled", n === 0);
     nextPara.toggleClass("rf-disabled", n === 0);
-    here.toggleClass("rf-hidden", !info.elsewhere);
-    jump.toggleClass("rf-hidden", !info.elsewhere);
-    back.toggleClass("rf-hidden", !(mine && showResume(player.followState)));
+    extra.toggleClass("rf-hidden", !info.elsewhere);
     if (!drag) place();
   };
   update();
@@ -25212,7 +25207,6 @@ function createBar(player, path, a) {
 }
 
 // src/ui/reading/installReading.ts
-var FAV_EVENT = "reading-feed:favorites-changed";
 function createPlayer(plugin, http, getSettings) {
   const player = new PlayerService({
     createAudio: () => document.createElement("audio"),
@@ -25316,11 +25310,6 @@ function installReading(plugin, player, getSettings, saveSettings) {
     startNote(target);
     void view2.leaf.openFile(target);
   }
-  function favKey(file) {
-    var _a;
-    const k = readRfKey((_a = rfFm(file)) != null ? _a : void 0);
-    return k ? loadedKey(k.source, k.id) : null;
-  }
   function fileAt(path) {
     const f = path === null ? null : app.vault.getAbstractFileByPath(path);
     return f instanceof import_obsidian5.TFile ? f : null;
@@ -25372,18 +25361,6 @@ function installReading(plugin, player, getSettings, saveSettings) {
         syncView(true);
       },
       stop: () => player.stop(),
-      toggleFavorite: () => {
-        const key = favKey(targetFile(view2));
-        if (!key) return;
-        const s = getSettings();
-        s.favorites = toggleFavorite(s.favorites, key);
-        void (saveSettings == null ? void 0 : saveSettings());
-        app.workspace.trigger(FAV_EVENT);
-      },
-      isFavorite: () => {
-        const key = favKey(targetFile(view2));
-        return key !== null && getSettings().favorites.includes(key);
-      },
       hasPrev: () => neighbor(-1) !== null,
       hasNext: () => neighbor(1) !== null,
       count: () => {
@@ -25522,8 +25499,6 @@ function installReading(plugin, player, getSettings, saveSettings) {
       refreshBars();
     })
   );
-  const favEvents = app.workspace;
-  plugin.registerEvent(favEvents.on(FAV_EVENT, () => bars.forEach((b) => b.bar.update())));
   plugin.registerEvent(app.workspace.on("active-leaf-change", () => {
     warm();
     refreshBars();

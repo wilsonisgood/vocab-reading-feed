@@ -7,6 +7,7 @@
 | 2026-10-14 | TED cue time 是否含片頭（V1-1） | ✅ 不含，免扣 | 帶／不帶片頭 low playlist EXTINF 差三場皆 3.527 s（Paul Bloom 2026：730.705 vs 734.232；nilay_kulkarni 2018：452.644 vs 456.171；anil_gupta 2010：1354.883 vs 1358.410）。實際開口 − cue（不帶片頭音軌，whisper-large-v3-turbo）：Paul −0.33／−0.29，2018 −0.35，2010 −0.68（各場第 1 段 whisper 夾在 0.00 不計）→ 遠離 −3.5，誤差屬 whisper 詞首偏早 |
 | 2026-10-14 | 懸浮播放器 A（放側欄）vs B（筆記內圓鈕）（round 2） | ✅ 混合：B ＋ 側欄標示播放中 | 使用者選定。側欄在手機是抽屜、收起就看不到 → 主體放筆記內可拖動圓鈕；側欄只做 🔊 標示 |
 | 2026-10-14 | 點前面段落 ▶ 不跳（round 2） | ✅ 已修：改用段落序號 | 不是跟隨捲動的問題：第一次播放寫 `rf-read` → frontmatter 重排位移 11 行 → DOM 上的行號全對不上，▶ 直接 return、高亮也消失。實機（CDP）重現並驗證修正 |
+| 2026-10-14 | (Applause)／(Laughter) 怎麼濾（round 3） | ✅ 只在上／下一段跳過，⛔ 不在載入時刪 | 載入時刪：要改 md 合約（必停點）、已載入的筆記不會變、被刪段的音訊會併進前一段（只播這段時會多播掌聲）。只跳過：時間戳與音源不動，同步不受影響 |
 | 2026-10-14 | TED GraphQL 篩選（V1-1） | ❌ 不支援 | `videos` 只有 first/after/before/last/language/id；試過約 35 個參數名皆 Unknown argument；introspection 關閉 → 篩選在插件端 |
 
 ## 2. 已關閉方向

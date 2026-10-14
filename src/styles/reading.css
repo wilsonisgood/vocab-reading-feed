@@ -26,9 +26,7 @@
 .rf-dock.is-open .rf-dock-card { display: block; }
 .rf-dock-card-left .rf-dock-card { left: auto; right: 0; }
 .rf-dock-card-up .rf-dock-card { top: auto; bottom: 48px; }
-.rf-dock-head { display: flex; align-items: center; justify-content: space-between; font-size: var(--font-ui-smaller); color: var(--text-muted); }
-.rf-dock-status.is-playing { color: #4ea1ff; }
-.rf-dock-title { font-weight: 600; margin: 2px 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rf-dock-title { font-weight: 600; margin: 0 0 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .rf-dock-title.is-link { cursor: pointer; color: var(--text-accent); }
 .rf-dock-meta { font-size: var(--font-ui-smaller); color: var(--text-muted); font-variant-numeric: tabular-nums; }
 .rf-dock-snippet {
@@ -39,11 +37,7 @@
 .rf-dock-ctrl, .rf-dock-extra { display: flex; align-items: center; justify-content: center; gap: 2px; flex-wrap: wrap; }
 .rf-dock button.rf-dock-btn, .rf-dock button.rf-dock-text { padding: 4px 8px; background: transparent; box-shadow: none; }
 .rf-dock button.rf-dock-text { font-size: var(--font-ui-smaller); color: var(--text-accent); }
-.rf-dock .rf-dock-close { padding: 2px; }
-.rf-dock .rf-dock-resume { width: 100%; margin-top: 4px; background: var(--interactive-accent); color: var(--text-on-accent); border-radius: 999px; }
 .rf-dock .rf-disabled { opacity: 0.35; }
-.rf-dock .rf-bar-fav.is-active { color: var(--interactive-accent); }
-.rf-dock .rf-bar-fav.is-active svg { fill: currentColor; }
 .rf-dock .rf-hidden { display: none; }
 .rf-play {
   display: inline-block;
