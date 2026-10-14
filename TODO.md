@@ -12,7 +12,7 @@ v1 目標：**TED、只串流**。面板列出 TED 演講（標題、講者、�
 | V1-1 TED client（純邏輯）＋片頭偏移驗證 | 🔵 | sonnet 背景；worktree `.claude/worktrees/v1-ted`（`feat/v1-ted`）；看該分支 git log |
 | V1-2 md 產生器（純邏輯） | ✅ | — |
 | V1-3 文章瀏覽面板 | ⬜ | V1-1、V1-2 |
-| V1-4 播放器與同步 | ⬜ | V1-2（可先用手寫的範例 md 開發） |
+| V1-4 播放器與同步 | 🔵 | sonnet 背景；worktree `.claude/worktrees/v1-player`（`feat/v1-player`）；看該分支 git log |
 | V1-5 實機驗證（桌面＋iPhone） | ⬜ | V1-3、V1-4 |
 
 ## V1-0 插件骨架（主 session 自己做）
