@@ -11,7 +11,7 @@ v1 目標：**TED、只串流**。面板列出 TED 演講（標題、講者、�
 | V1-0 插件骨架 | ✅ | — |
 | V1-1 TED client（純邏輯）＋片頭偏移驗證 | ✅ | — |
 | V1-2 md 產生器（純邏輯） | ✅ | — |
-| V1-3 文章瀏覽面板 | ⬜ | V1-1、V1-2 |
+| V1-3 文章瀏覽面板 | 🔵 | sonnet 背景；worktree `.claude/worktrees/v1-browser`（`feat/v1-browser`） |
 | V1-4 播放器與同步 | ✅ | 實機項目留給 V1-5 |
 | V1-5 實機驗證（桌面＋iPhone） | ⬜ | V1-3、V1-4 |
 
