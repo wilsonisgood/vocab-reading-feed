@@ -4,8 +4,13 @@ import type { ReadingFeedSettings } from "../../core/types";
 import type { TedClient } from "../../services/ted/TedClient";
 import { BROWSER_VIEW_TYPE, BrowserView } from "./BrowserView";
 
-export function installBrowser(plugin: Plugin, client: TedClient, getSettings: () => ReadingFeedSettings): void {
-  plugin.registerView(BROWSER_VIEW_TYPE, (leaf) => new BrowserView(leaf, { client, getSettings }));
+export function installBrowser(
+  plugin: Plugin,
+  client: TedClient,
+  getSettings: () => ReadingFeedSettings,
+  saveSettings: () => Promise<void> = () => Promise.resolve(),
+): void {
+  plugin.registerView(BROWSER_VIEW_TYPE, (leaf) => new BrowserView(leaf, { client, getSettings, saveSettings }));
 
   const open = async () => {
     const { workspace } = plugin.app;

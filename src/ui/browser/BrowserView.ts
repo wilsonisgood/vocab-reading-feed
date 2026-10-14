@@ -1,12 +1,13 @@
 // Right-sidebar article browser (V1-3): list, filters, batch load into notes.
-import { ItemView, normalizePath, type WorkspaceLeaf } from "obsidian";
+import { ItemView, normalizePath, setIcon, type WorkspaceLeaf } from "obsidian";
 import { readRfKey } from "../../core/note/parse";
 import { notePath, renderNote } from "../../core/note/render";
 import { NoTranscriptError } from "../../core/ted/talkPage";
-import type { ReadingFeedSettings, TalkSummary } from "../../core/types";
+import { NO_TRANSCRIPT } from "../../core/ted/noTranscript";
+import { RF_READ_KEY, type ReadingFeedSettings, type StatusFilter, type TalkSummary } from "../../core/types";
 import {
-  collectTopics, EMPTY_FILTER, filterTalks, formatDuration, loadedKey, tedKey, uniquePath,
-  type BrowserFilter, type LengthFilter,
+  collectTopics, EMPTY_FILTER, filterTalks, formatDuration, isUnavailable, loadedKey, tedKey, uniquePath,
+  type BrowserFilter, type LengthFilter, type StatusContext,
 } from "../../core/browser/logic";
 import type { TedClient } from "../../services/ted/TedClient";
 
@@ -20,7 +21,23 @@ const MAX_STALE_PAGES = 5;
 export interface BrowserDeps {
   client: TedClient;
   getSettings: () => ReadingFeedSettings;
+  /** Persist the (mutated) settings object. */
+  saveSettings?: () => Promise<void>;
 }
+
+export const FAVORITES_CHANGED = "reading-feed:favorites-changed";
+/** Distance (px) from the bottom at which the next page is fetched. */
+const NEAR_BOTTOM = 300;
+
+type FillMode = "manual" | "scroll" | "auto";
+
+const STATUS_LABELS: [StatusFilter, string][] = [
+  ["all", "狀態：全部"],
+  ["unloaded", "未載入"],
+  ["unread", "已載入未讀"],
+  ["read", "已讀"],
+  ["favorite", "收藏"],
+];
 
 const LENGTH_LABELS: [LengthFilter, string][] = [
   ["all", "長度：全部"],
@@ -41,6 +58,8 @@ export class BrowserView extends ItemView {
   private filter: BrowserFilter = { ...EMPTY_FILTER };
   private selected = new Set<string>();
   private loaded = new Set<string>();
+  private read = new Set<string>();
+  private scanTimer: number | null = null;
   private failures: { title: string; reason: string }[] = [];
   private progress = "";
 
@@ -50,8 +69,6 @@ export class BrowserView extends ItemView {
   private moreBtn!: HTMLButtonElement;
   private loadBtn!: HTMLButtonElement;
   private resultEl!: HTMLElement;
-  private sentinel!: HTMLElement;
-  private observer: IntersectionObserver | null = null;
 
   constructor(leaf: WorkspaceLeaf, private readonly deps: BrowserDeps) {
     super(leaf);
@@ -84,6 +101,12 @@ export class BrowserView extends ItemView {
       this.filter.keyword = kw.value;
       this.onFilterChanged();
     };
+    const statusSel = bar.createEl("select", { cls: "dropdown rf-filter-status" });
+    for (const [v, label] of STATUS_LABELS) statusSel.createEl("option", { value: v, text: label });
+    statusSel.onchange = () => {
+      this.filter.status = statusSel.value as StatusFilter;
+      this.onFilterChanged();
+    };
     const lenSel = bar.createEl("select", { cls: "dropdown rf-filter-length" });
     for (const [v, label] of LENGTH_LABELS) lenSel.createEl("option", { value: v, text: label });
     lenSel.onchange = () => {
@@ -92,12 +115,13 @@ export class BrowserView extends ItemView {
     };
 
     this.listEl = root.createDiv("rf-browser-list");
-    this.sentinel = createDiv("rf-browser-sentinel");
+    this.listEl.addEventListener("scroll", this.onScroll, { passive: true });
+    root.addEventListener("scroll", this.onScroll, { passive: true });
     this.statusEl = root.createDiv("rf-browser-status");
     this.moreBtn = root.createEl("button", { cls: "rf-browser-more", text: "再載入更多" });
     this.moreBtn.onclick = () => {
       this.stalled = false;
-      void this.fill(true);
+      void this.fill("manual");
     };
 
     const foot = root.createDiv("rf-browser-foot");
@@ -105,24 +129,30 @@ export class BrowserView extends ItemView {
     this.loadBtn.onclick = () => void this.loadSelected();
     this.resultEl = foot.createDiv("rf-browser-result");
 
-    this.observer = new IntersectionObserver(
-      (entries) => {
-        if (entries.some((e) => e.isIntersecting)) void this.fill(false);
-      },
-      { root: this.listEl, rootMargin: "200px" },
+    this.registerEvent(
+      this.app.metadataCache.on("changed", () => {
+        if (this.scanTimer !== null) window.clearTimeout(this.scanTimer);
+        this.scanTimer = window.setTimeout(() => {
+          this.scanTimer = null;
+          this.scanVault();
+          this.renderList();
+        }, 300);
+      }),
     );
-    this.observer.observe(this.sentinel);
+    this.registerEvent(this.app.workspace.on(FAVORITES_CHANGED as "quit", () => this.renderList()));
 
     this.renderAll();
     if (!this.started) {
       this.started = true;
-      await this.fill(true);
+      await this.fill("manual");
     }
+    this.checkBottom();
   }
 
   async onClose(): Promise<void> {
-    this.observer?.disconnect();
-    this.observer = null;
+    this.listEl?.removeEventListener("scroll", this.onScroll);
+    this.contentEl.removeEventListener("scroll", this.onScroll);
+    if (this.scanTimer !== null) window.clearTimeout(this.scanTimer);
   }
 
   // ---- data ----
@@ -131,35 +161,57 @@ export class BrowserView extends ItemView {
   private scanVault(): void {
     const { vault, metadataCache } = this.app;
     this.loaded.clear();
+    this.read.clear();
     for (const f of vault.getMarkdownFiles()) {
-      const key = readRfKey(metadataCache.getFileCache(f)?.frontmatter as Record<string, unknown> | undefined);
-      if (key) this.loaded.add(loadedKey(key.source, key.id));
+      const fm = metadataCache.getFileCache(f)?.frontmatter as Record<string, unknown> | undefined;
+      const key = readRfKey(fm);
+      if (!key) continue;
+      const k = loadedKey(key.source, key.id);
+      this.loaded.add(k);
+      const r = fm?.[RF_READ_KEY];
+      if (r !== undefined && r !== null && r !== "" && r !== false) this.read.add(k);
     }
   }
 
+  private statusContext(): StatusContext {
+    return { loaded: this.loaded, read: this.read, favorites: new Set(this.deps.getSettings().favorites) };
+  }
+
   private visible(): TalkSummary[] {
-    return filterTalks(this.items, this.filter);
+    return filterTalks(this.items, this.filter, this.statusContext(), NO_TRANSCRIPT);
+  }
+
+  private readonly onScroll = (): void => this.checkBottom();
+
+  /** Fetch the next page when either scroll container is near its bottom (or not scrollable). */
+  private checkBottom(): void {
+    if (!this.listEl || this.fetching || !this.hasNext) return;
+    const near = (el: HTMLElement) => el.scrollHeight - el.scrollTop - el.clientHeight < NEAR_BOTTOM;
+    if (near(this.listEl) && near(this.contentEl)) void this.fill("scroll");
   }
 
   private onFilterChanged(): void {
     this.stalled = false;
     this.renderList();
-    void this.fill(false);
+    void this.fill("auto");
   }
 
   /**
-   * Fetch pages until enough items are visible. `manual` = user pressed the button
-   * (or first load): fetch at least one page regardless of the visible count.
+   * Fetch pages until enough items are visible. `manual` (button / first load) and `scroll`
+   * (reached the bottom) fetch at least one page regardless of the visible count; `manual`
+   * also overrides a stalled state.
    */
-  private async fill(manual: boolean): Promise<void> {
-    if (this.fetching || !this.hasNext || (this.stalled && !manual)) return;
+  private async fill(mode: FillMode): Promise<void> {
+    if (this.fetching || !this.hasNext || (this.stalled && mode !== "manual")) return;
+    const forceFirst = mode !== "auto";
+    const visibleBefore = this.visible().length;
     this.fetching = true;
     this.listError = "";
     this.renderStatus();
     try {
       let stale = 0;
       let first = true;
-      while (this.hasNext && stale < MAX_STALE_PAGES && (first && manual ? true : this.visible().length < MIN_VISIBLE)) {
+      while (this.hasNext && stale < MAX_STALE_PAGES && ((first && forceFirst) || this.visible().length < MIN_VISIBLE)) {
         first = false;
         const before = this.visible().length;
         const page = await this.deps.client.listPage(this.endCursor);
@@ -170,7 +222,7 @@ export class BrowserView extends ItemView {
         this.refreshTopics();
         this.renderList();
         stale = this.visible().length > before ? 0 : stale + 1;
-        if (!manual && this.visible().length >= MIN_VISIBLE) break;
+        if (mode !== "manual" && this.visible().length >= MIN_VISIBLE) break;
       }
       this.stalled = this.hasNext && stale >= MAX_STALE_PAGES;
     } catch (e) {
@@ -179,6 +231,8 @@ export class BrowserView extends ItemView {
       this.fetching = false;
       this.renderStatus();
     }
+    // Still near the bottom (list too short to scroll)? Fetch again, but only while progress is made.
+    if (!this.listError && this.visible().length > visibleBefore) this.checkBottom();
   }
 
   private async ensureFolder(path: string): Promise<void> {
@@ -214,6 +268,8 @@ export class BrowserView extends ItemView {
         ok++;
         this.renderList();
       } catch (e) {
+        this.selected.delete(item.slug);
+        if (e instanceof NoTranscriptError) await this.markNoTranscript(item.slug);
         const reason = e instanceof NoTranscriptError ? "沒有英文逐字稿" : e instanceof Error ? e.message : String(e);
         this.failures.push({ title: item.title, reason });
       }
@@ -221,7 +277,25 @@ export class BrowserView extends ItemView {
     }
     this.progress = `完成：成功 ${ok}／失敗 ${this.failures.length}`;
     this.busy = false;
-    this.renderFooter();
+    this.renderList();
+  }
+
+  private async markNoTranscript(slug: string): Promise<void> {
+    const s = this.deps.getSettings();
+    if (s.noTranscript.includes(slug)) return;
+    s.noTranscript.push(slug);
+    await this.deps.saveSettings?.();
+  }
+
+  private async toggleFavorite(slug: string): Promise<void> {
+    const s = this.deps.getSettings();
+    const key = tedKey(slug);
+    const i = s.favorites.indexOf(key);
+    if (i >= 0) s.favorites.splice(i, 1);
+    else s.favorites.push(key);
+    await this.deps.saveSettings?.();
+    this.app.workspace.trigger(FAVORITES_CHANGED);
+    this.renderList();
   }
 
   // ---- rendering ----
@@ -245,17 +319,19 @@ export class BrowserView extends ItemView {
     const prevTop = this.listEl.scrollTop;
     this.listEl.empty();
     for (const item of this.visible()) this.renderRow(item);
-    this.listEl.appendChild(this.sentinel);
     this.listEl.scrollTop = prevTop;
     this.renderFooter();
   }
 
   private renderRow(item: TalkSummary): void {
     const isLoaded = this.loaded.has(tedKey(item.slug));
-    const row = this.listEl.createDiv({ cls: "rf-row" + (isLoaded ? " rf-row-loaded" : "") });
+    const unavailable = !isLoaded && isUnavailable(item.slug, this.deps.getSettings().noTranscript);
+    const row = this.listEl.createDiv({
+      cls: "rf-row" + (isLoaded ? " rf-row-loaded" : "") + (unavailable ? " rf-row-unavailable" : ""),
+    });
     const cb = row.createEl("input", { type: "checkbox", cls: "rf-row-check" });
     cb.checked = isLoaded || this.selected.has(item.slug);
-    cb.disabled = isLoaded || this.busy;
+    cb.disabled = isLoaded || unavailable || this.busy;
     cb.onchange = () => {
       if (cb.checked) this.selected.add(item.slug);
       else this.selected.delete(item.slug);
@@ -271,7 +347,16 @@ export class BrowserView extends ItemView {
     body.createDiv({ cls: "rf-row-meta", text: `${item.speaker} · ${item.published} · ${formatDuration(item.duration)}` });
     const tags = body.createDiv("rf-row-tags");
     if (isLoaded) tags.createSpan({ cls: "rf-tag rf-tag-loaded", text: "已載入" });
+    if (unavailable) tags.createSpan({ cls: "rf-tag rf-tag-warn", text: "沒有英文逐字稿" });
     for (const t of item.topics) tags.createSpan({ cls: "rf-tag", text: t });
+
+    const fav = this.deps.getSettings().favorites.includes(tedKey(item.slug));
+    const bm = row.createDiv({
+      cls: "rf-bookmark" + (fav ? " is-active" : ""),
+      attr: { "aria-label": fav ? "取消收藏" : "收藏", role: "button" },
+    });
+    setIcon(bm, "bookmark");
+    bm.onclick = () => void this.toggleFavorite(item.slug);
   }
 
   private renderStatus(): void {

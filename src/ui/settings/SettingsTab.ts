@@ -46,5 +46,14 @@ export class ReadingFeedSettingTab extends PluginSettingTab {
         await this.host.saveSettings();
       }),
     );
+
+    new Setting(containerEl)
+      .setName("開啟 rf 筆記時自動切到閱讀模式")
+      .addToggle((t) =>
+        t.setValue(s.autoReadingMode).onChange(async (v) => {
+          s.autoReadingMode = v;
+          await this.host.saveSettings();
+        }),
+      );
   }
 }
