@@ -11,3 +11,4 @@
   → `tools/survey.py` 用 `/etc/ssl/cert.pem`。
 - 2026-10-14 **BBC 節目列表的 `<a` 跟 `href` 之間是兩個空白**，regex 要寫 `<a\s+href`，不然標題全空。
 - 2026-10-14 **TED 的 videos sitemap 會落後**（最新 2026-09-16；09-30 的 Paul Bloom 那場不在裡面）→ 最近一個月要另外補。
+- 2026-10-14 **hls.js 自帶的型別需要 TS ≥ 5.7**（Uint8Array 泛型），本 repo 釘 TS 5.3.3 → 用 `src/services/player/hls-light.d.ts` 自寫最小型別；升級 TS 後可刪。
