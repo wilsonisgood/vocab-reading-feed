@@ -65,6 +65,12 @@ export interface ReadingFeedSettings {
   playMode: PlayMode;
   /** Follow-scroll on by default (METHOD §3.3). */
   followScroll: boolean;
+  /** Switch rf notes to reading mode when opened (METHOD §3.1). */
+  autoReadingMode: boolean;
+  /** Bookmarked talks, as loadedKey `<rf-source>:<rf-id>` (METHOD §3.4). */
+  favorites: string[];
+  /** Slugs found to have no English transcript at load time; greyed out in the list (METHOD §2.5). */
+  noTranscript: string[];
 }
 
 export const DEFAULT_SETTINGS: ReadingFeedSettings = {
@@ -72,4 +78,13 @@ export const DEFAULT_SETTINGS: ReadingFeedSettings = {
   defaultSpeed: 1,
   playMode: "toEnd",
   followScroll: true,
+  autoReadingMode: true,
+  favorites: [],
+  noTranscript: [],
 };
+
+/** Frontmatter key set (YYYY-MM-DD) the first time any audio in the note plays (METHOD §1, §3.4). */
+export const RF_READ_KEY = "rf-read";
+
+/** Browser status filter (METHOD §3.4). */
+export type StatusFilter = "all" | "unloaded" | "unread" | "read" | "favorite";
