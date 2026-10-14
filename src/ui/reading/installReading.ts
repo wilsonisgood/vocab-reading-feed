@@ -1,11 +1,15 @@
 // Reading-mode glue (METHOD §3): ▶ per paragraph, playback bar, follow-scroll.
-import { MarkdownView, TFile, type Plugin, type MarkdownPostProcessorContext } from "obsidian";
+import { MarkdownView, TFile, type EventRef, type Plugin, type MarkdownPostProcessorContext } from "obsidian";
 import type { HttpPort } from "../../core/ports";
-import type { ParagraphTime, ReadingFeedSettings } from "../../core/types";
+import { RF_READ_KEY, type ParagraphTime, type ReadingFeedSettings } from "../../core/types";
 import { parseLineTimestamp, parseTimestamps, readRfKey } from "../../core/note/parse";
 import { PlayerService } from "../../services/player/PlayerService";
 import { attachHls } from "../../services/player/hlsAttach";
-import { createBar, type Bar } from "./bar";
+import { loadedKey } from "../../core/browser/logic";
+import { createBar, type Bar, type BarActions } from "./bar";
+import { neighborNote, toggleFavorite, todayString, type NoteRef } from "./logic";
+
+const FAV_EVENT = "reading-feed:favorites-changed";
 
 interface NoteInfo {
   mtime: number;
@@ -24,10 +28,15 @@ export function createPlayer(plugin: Plugin, http: HttpPort, getSettings: () => 
   return player;
 }
 
-export function installReading(plugin: Plugin, player: PlayerService, _getSettings: () => ReadingFeedSettings): void {
+export function installReading(
+  plugin: Plugin,
+  player: PlayerService,
+  getSettings: () => ReadingFeedSettings,
+  saveSettings?: () => Promise<void>,
+): void {
   const app = plugin.app;
   const cache = new Map<string, NoteInfo>();
-  const bars = new Map<MarkdownView, Bar>();
+  const bars = new Map<MarkdownView, { path: string; bar: Bar }>();
 
   /** Timestamp table keyed by path + mtime; filled before any ▶ exists, so clicks stay synchronous. */
   async function getInfo(file: TFile, fm: Record<string, unknown> | undefined): Promise<NoteInfo | null> {
@@ -71,26 +80,154 @@ export function installReading(plugin: Plugin, player: PlayerService, _getSettin
     }
   }
 
+  /** rf frontmatter of a view's note, or null when it is not a loaded note. */
+  function rfFm(file: TFile | null): Record<string, unknown> | null {
+    if (!file) return null;
+    const fm = app.metadataCache.getFileCache(file)?.frontmatter as Record<string, unknown> | undefined;
+    return readRfKey(fm) ? (fm as Record<string, unknown>) : null;
+  }
+
+  /** Point the player at a note synchronously (iOS: must stay inside the tap; METHOD §3.2). Times fill in async. */
+  function loadSync(file: TFile): ParagraphTime[] | null {
+    const fm = rfFm(file);
+    const url = fm?.["rf-audio"];
+    if (typeof url !== "string" || url === "") return null;
+    const times = cache.get(file.path)?.times ?? [];
+    player.load(file.path, url, times);
+    if (times.length === 0) {
+      void getInfo(file, fm as Record<string, unknown>).then((info) => {
+        if (info && player.notePath === file.path) player.load(file.path, info.audioUrl, info.times);
+      });
+    }
+    return times;
+  }
+
+  function startNote(file: TFile): void {
+    const times = loadSync(file);
+    if (times === null) return;
+    if (times.length > 0) player.playFrom(0);
+    else player.playStart();
+  }
+
+  function siblings(file: TFile): NoteRef[] {
+    const out: NoteRef[] = [];
+    for (const c of file.parent?.children ?? []) {
+      if (!(c instanceof TFile) || c.extension !== "md") continue;
+      const fm = rfFm(c);
+      if (fm) out.push({ path: c.path, name: c.name, published: fm["published"] });
+    }
+    return out;
+  }
+
+  function goNote(view: MarkdownView, dir: -1 | 1): void {
+    const file = view.file;
+    if (!file) return;
+    const n = neighborNote(siblings(file), file.path, dir);
+    const target = n && app.vault.getAbstractFileByPath(n.path);
+    if (!(target instanceof TFile)) return;
+    startNote(target); // synchronous part first
+    void view.leaf.openFile(target);
+  }
+
+  function favKey(file: TFile | null): string | null {
+    const k = readRfKey(rfFm(file) ?? undefined);
+    return k ? loadedKey(k.source, k.id) : null;
+  }
+
+  function makeActions(view: MarkdownView): BarActions {
+    const path = () => view.file?.path ?? "";
+    return {
+      prevNote: () => goNote(view, -1),
+      nextNote: () => goNote(view, 1),
+      prevPara: () => paraStep(view, -1),
+      nextPara: () => paraStep(view, 1),
+      toggle: () => {
+        if (!view.file) return;
+        if (player.notePath !== path()) startNote(view.file);
+        else player.toggle();
+      },
+      resume: () => {
+        player.resumeFollow();
+        syncView(true);
+      },
+      stop: () => player.stop(),
+      toggleFavorite: () => {
+        const key = favKey(view.file);
+        if (!key) return;
+        const s = getSettings();
+        s.favorites = toggleFavorite(s.favorites, key);
+        void saveSettings?.();
+        app.workspace.trigger(FAV_EVENT);
+      },
+      isFavorite: () => {
+        const key = favKey(view.file);
+        return key !== null && getSettings().favorites.includes(key);
+      },
+      hasPrev: () => !!view.file && neighborNote(siblings(view.file), view.file.path, -1) !== null,
+      hasNext: () => !!view.file && neighborNote(siblings(view.file), view.file.path, 1) !== null,
+      count: () => cache.get(path())?.times.length ?? 0,
+    };
+  }
+
+  function paraStep(view: MarkdownView, dir: -1 | 1): void {
+    if (!view.file) return;
+    if (player.notePath !== view.file.path && loadSync(view.file) === null) return;
+    player.step(dir);
+  }
+
+  /** Floating bar on every rf note in reading mode; `rf-note` class hides the properties block. */
   function refreshBars(): void {
-    const path = player.notePath;
-    const want = new Set(previewViews(path).filter((v) => v.getMode() === "preview"));
-    for (const [view, bar] of bars) {
-      if (!want.has(view) || !view.containerEl.isConnected) {
-        bar.el.remove();
+    const seen = new Set<MarkdownView>();
+    for (const leaf of app.workspace.getLeavesOfType("markdown")) {
+      const view = leaf.view;
+      if (!(view instanceof MarkdownView)) continue;
+      const rf = rfFm(view.file) !== null;
+      view.containerEl.toggleClass("rf-note", rf);
+      if (!rf || view.getMode() !== "preview") continue;
+      seen.add(view);
+      let entry = bars.get(view);
+      if (entry && entry.path !== view.file?.path) {
+        entry.bar.el.remove();
+        entry = undefined;
+      }
+      if (!entry) {
+        entry = { path: view.file?.path ?? "", bar: createBar(player, view.file?.path ?? "", makeActions(view)) };
+        bars.set(view, entry);
+      }
+      if (entry.bar.el.parentElement !== view.contentEl) view.contentEl.appendChild(entry.bar.el);
+      entry.bar.update();
+    }
+    for (const [view, entry] of bars) {
+      if (!seen.has(view) || !view.containerEl.isConnected) {
+        entry.bar.el.remove();
         bars.delete(view);
       }
     }
-    for (const view of want) {
-      let bar = bars.get(view);
-      if (!bar) {
-        bar = createBar(player, () => {
-          player.resumeFollow();
-          syncView(true);
-        });
-        bars.set(view, bar);
-      }
-      if (bar.el.parentElement !== view.contentEl) view.contentEl.prepend(bar.el);
-      bar.update();
+  }
+
+  // Auto reading mode: switch once when a loaded note is opened (METHOD §3.1).
+  const autoDone = new WeakMap<object, string>();
+  function tryAutoPreview(file: TFile | null): void {
+    if (!file || !getSettings().autoReadingMode || !rfFm(file)) return;
+    const view = app.workspace.getActiveViewOfType(MarkdownView);
+    if (!view || view.file?.path !== file.path || autoDone.get(view.leaf) === file.path) return;
+    autoDone.set(view.leaf, file.path);
+    if (view.getMode() === "preview") return;
+    const st = view.leaf.getViewState();
+    void view.leaf.setViewState({ ...st, state: { ...st.state, mode: "preview" } });
+  }
+
+  // First play of a note stamps rf-read once (METHOD §1, §3.4).
+  const readMarked = new Set<string>();
+  function markRead(): void {
+    const path = player.notePath;
+    if (path === null || readMarked.has(path)) return;
+    readMarked.add(path);
+    const file = app.vault.getAbstractFileByPath(path);
+    if (file instanceof TFile) {
+      void app.fileManager.processFrontMatter(file, (fm: Record<string, unknown>) => {
+        fm[RF_READ_KEY] ??= todayString();
+      });
     }
   }
 
@@ -139,7 +276,22 @@ export function installReading(plugin: Plugin, player: PlayerService, _getSettin
     const file = app.workspace.getActiveFile();
     if (file) void getInfo(file, app.metadataCache.getFileCache(file)?.frontmatter);
   };
-  plugin.registerEvent(app.workspace.on("file-open", () => { warm(); refreshBars(); }));
+  plugin.registerEvent(
+    app.workspace.on("file-open", (f) => {
+      warm();
+      tryAutoPreview(f);
+      refreshBars();
+    }),
+  );
+  plugin.registerEvent(
+    app.metadataCache.on("changed", (f) => {
+      // Frontmatter of a freshly created note arrives after file-open.
+      if (f.path === app.workspace.getActiveFile()?.path) tryAutoPreview(f);
+      refreshBars();
+    }),
+  );
+  const favEvents = app.workspace as unknown as { on(name: string, cb: () => void): EventRef };
+  plugin.registerEvent(favEvents.on(FAV_EVENT, () => bars.forEach((b) => b.bar.update())));
   plugin.registerEvent(app.workspace.on("active-leaf-change", () => { warm(); refreshBars(); }));
   plugin.registerEvent(app.workspace.on("layout-change", refreshBars));
 
@@ -147,26 +299,31 @@ export function installReading(plugin: Plugin, player: PlayerService, _getSettin
   const onUserScroll = (e: Event) => {
     const t = e.target;
     if (!(t instanceof Node) || player.notePath === null) return;
-    for (const [view, bar] of bars) {
-      if (view.contentEl.contains(t) && !bar.el.contains(t)) return player.userScrolled();
+    for (const [view, { path, bar }] of bars) {
+      if (path === player.notePath && view.contentEl.contains(t) && !bar.el.contains(t)) return player.userScrolled();
     }
   };
   plugin.registerDomEvent(document, "wheel", onUserScroll, { passive: true });
   plugin.registerDomEvent(document, "touchmove", onUserScroll, { passive: true });
 
   const offs = [
-    player.on("index", () => syncView(true)),
-    player.on("follow", () => {
-      bars.forEach((b) => b.update());
+    player.on("index", () => {
+      syncView(true);
+      bars.forEach((b) => b.bar.update());
     }),
+    player.on("follow", () => {
+      bars.forEach((b) => b.bar.update());
+    }),
+    player.on("started", markRead),
     player.on("state", () => {
       refreshBars();
     }),
   ];
   plugin.register(() => {
     offs.forEach((off) => off());
-    bars.forEach((b) => b.el.remove());
+    bars.forEach((b) => b.bar.el.remove());
     bars.clear();
+    app.workspace.getLeavesOfType("markdown").forEach((l) => l.view.containerEl.removeClass("rf-note"));
   });
   app.workspace.onLayoutReady(refreshBars);
 }

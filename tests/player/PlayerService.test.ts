@@ -135,4 +135,42 @@ describe("PlayerService", () => {
     audio.tick(10.5);
     expect(cb).toHaveBeenCalledTimes(2);
   });
+
+  it("load with empty times then same source updates times without touching audio", () => {
+    const { audio, p } = make("toEnd");
+    p.load("a.md", "https://x/a.m3u8", []);
+    p.playStart();
+    expect(audio.plays).toBe(1);
+    expect(audio.currentTime).toBe(0);
+    audio.currentTime = 12;
+    p.load("a.md", "https://x/a.m3u8", times);
+    expect(audio.plays).toBe(1);
+    expect(audio.currentTime).toBe(12);
+    expect(p.paragraphs).toBe(times);
+    expect(p.currentIndex).toBe(1);
+  });
+
+  it("step while paused only moves; while playing keeps playing", () => {
+    const { audio, p } = make("toEnd");
+    p.load("a.md", "https://x/a.m3u8", times);
+    p.step(1);
+    expect(p.currentIndex).toBe(0);
+    expect(audio.plays).toBe(0);
+    p.step(1);
+    expect(audio.currentTime).toBe(10);
+    expect(audio.paused).toBe(true);
+    p.playFrom(1);
+    p.step(1);
+    expect(p.currentIndex).toBe(2);
+    expect(audio.plays).toBe(2);
+  });
+
+  it("emits started on play requests", () => {
+    const { p } = make("toEnd");
+    const cb = vi.fn();
+    p.on("started", cb);
+    p.load("a.md", "https://x/a.m3u8", times);
+    p.playFrom(0);
+    expect(cb).toHaveBeenCalledTimes(1);
+  });
 });

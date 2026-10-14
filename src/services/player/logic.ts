@@ -62,3 +62,10 @@ export function shouldFollow(s: FollowState): boolean {
 export function showResume(s: FollowState): boolean {
   return s.enabled && s.suspended;
 }
+
+/** Paragraph to move to for prev (-1) / next (+1); clamped; -1 when the table is empty (METHOD §3.1). */
+export function stepIndex(cur: number, count: number, dir: -1 | 1): number {
+  if (count <= 0) return -1;
+  if (cur < 0) return 0;
+  return Math.min(count - 1, Math.max(0, cur + dir));
+}
