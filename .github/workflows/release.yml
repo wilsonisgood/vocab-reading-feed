@@ -1,0 +1,112 @@
+# 推 tag 時直接建立並發佈 GitHub Release（不是 draft），附上 BRAT / Obsidian
+# 要的三個未壓縮檔案。一般由 release.sh 推 tag 觸發。
+#
+# 為什麼不在 CI 重新 build：
+#   上傳的應該是本機跑過 `npm run check`、實際在 vault 測過的那一份 main.js。
+#   CI 重 build 就算鎖了 package-lock.json，Node 版本／平台不同仍可能產出不一樣
+#   的 bundle。所以這裡直接上傳 tag 指向的 commit 裡的 main.js、styles.css、
+#   manifest.json（release.sh 會先 npm run check 再把 build 產物 commit 進去）。
+#
+# 版號規則（BRAT 以 tag 為準，tag、release 名稱、manifest.json 的 version 要一字不差）：
+#   - 版號只用純數字 X.Y.Z（例如 2.0.0），不接受帶 "-" 的版號（2.0.0-beta.1 這類）
+#   - tag 不加 v：2.0.0，不是 v2.0.0
+#   - 直接發佈成正式 release 並標成 --latest；不建 draft、沒有 prerelease
+name: Release
+
+on:
+  push:
+    tags:
+      - "*"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout tag
+        uses: actions/checkout@v5
+
+      - name: Check tag, versions and build artifacts
+        id: meta
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          manifest_version=$(jq -r '.version' manifest.json)
+          package_version=$(jq -r '.version' package.json)
+          min_app=$(jq -r '.minAppVersion' manifest.json)
+
+          echo "tag=$TAG manifest=$manifest_version package=$package_version minAppVersion=$min_app"
+
+          if ! [[ "$TAG" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::tag ($TAG) 不是純數字版號 X.Y.Z。版號不接受 \"-\"（像 2.0.0-beta.1），請刪掉這個 tag 重打。"
+            exit 1
+          fi
+
+          if [ "$TAG" != "$manifest_version" ]; then
+            echo "::error::tag ($TAG) 跟 manifest.json 的 version ($manifest_version) 不一致。BRAT 以 tag 為準，請刪掉這個 tag，改好版號後重打。"
+            exit 1
+          fi
+          if [ "$package_version" != "$manifest_version" ]; then
+            echo "::error::package.json 的 version ($package_version) 跟 manifest.json ($manifest_version) 不一致，請用 npm version 同步。"
+            exit 1
+          fi
+
+          # versions.json 只在 minAppVersion 改變時才新增一筆，所以檢查
+          # 「最後一筆的 minAppVersion 就是目前的 minAppVersion」。
+          latest_min=$(jq -r 'to_entries | last | .value' versions.json)
+          if [ "$latest_min" != "$min_app" ]; then
+            echo "::error::versions.json 最後一筆的 minAppVersion 是 $latest_min，但 manifest.json 是 $min_app。請在 versions.json 加一筆 \"$manifest_version\": \"$min_app\"（npm version 會自動加）。"
+            exit 1
+          fi
+
+          for f in main.js manifest.json styles.css; do
+            if [ ! -s "$f" ]; then
+              echo "::error::$f 不存在或是空的。"
+              exit 1
+            fi
+          done
+
+          # npm run dev 產生的 main.js 帶 inline source map，不能拿來發版。
+          if grep -q 'sourceMappingURL=data:' main.js; then
+            echo "::error::main.js 是開發版 build（含 inline source map）。請在本機 npm run build 後 commit，再重打 tag。"
+            exit 1
+          fi
+
+      - name: Extract release notes from CHANGELOG.md
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          # 取 "## [<tag>]" 開頭的那一節，到下一個 "## [" 為止。
+          awk -v tag="$TAG" '
+            index($0, "## [" tag "]") == 1 { found = 1; next }
+            found && /^## \[/ { exit }
+            found { print }
+          ' CHANGELOG.md > release-notes.md || true
+          if [ ! -s release-notes.md ]; then
+            echo "::warning::CHANGELOG.md 沒有 [$TAG] 這一節，release notes 先留一行說明，請事後到 GitHub 的 Releases 頁補上。"
+            echo "見 CHANGELOG.md。" > release-notes.md
+          fi
+          cat release-notes.md
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            echo "::error::Release $TAG 已經存在。要重建請先在 GitHub 刪掉那個 release（和 tag），再重推 tag。"
+            exit 1
+          fi
+          gh release create "$TAG" --verify-tag --latest --title "$TAG" --notes-file release-notes.md \
+            main.js manifest.json styles.css
+          echo "已發佈正式 release $TAG。"

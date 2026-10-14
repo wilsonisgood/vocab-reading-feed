@@ -18,3 +18,9 @@
 ## Python 工具（pipeline/）
 - 一律 `python3 -I`；裝套件 `pip3 install`。HTTPS 憑證用 `/etc/ssl/cert.pem`（見 PITFALLS）。
 - 對官網要客氣：逐頁抓的速率 ≤ 1 req/s，HTTP 一律經過 `pipeline/tools/survey.py` 的 `get()` 快取。
+
+## 發版（⛔ 只由使用者執行）
+- `./release.sh <X.Y.Z|patch|minor|major>`；先 `--dry-run` 看摘要。會 `npm run check` → 改版號 →
+  commit → push 分支與 tag → GitHub Actions 發正式 release（附 main.js、manifest.json、styles.css，給 BRAT）。
+- 發版前在 `CHANGELOG.md` 寫好 `## [X.Y.Z]` 那一節（release notes 從這裡抓）。
+- 版號只用純數字 X.Y.Z、tag 不加 `v`；第一版直接 `./release.sh 0.1.0`。
