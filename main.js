@@ -23,9 +23,11 @@ __export(main_exports, {
   default: () => ReadingFeedPlugin
 });
 module.exports = __toCommonJS(main_exports);
-var import_obsidian3 = require("obsidian");
+var import_obsidian5 = require("obsidian");
 
 // src/core/types.ts
+var RF_SCHEMA = 1;
+var TED_LICENSE = "CC BY-NC-ND 4.0 \u2014 TED Conferences, LLC";
 var DEFAULT_SETTINGS = {
   folder: "Reading Feed",
   defaultSpeed: 1,
@@ -54,7 +56,166 @@ var ObsidianHttp = class {
   }
 };
 
-// src/ui/reading/installReading.ts
+// src/core/ted/graphql.ts
+function buildVideosQuery(after, first = 30) {
+  const afterArg = after === null ? "" : `after: ${JSON.stringify(after)}, `;
+  const query = `{ videos(first: ${Math.trunc(first)}, ${afterArg}language: "en") { totalCount pageInfo { endCursor hasNextPage } nodes { slug title presenterDisplayName publishedAt duration topics { nodes { name } } primaryImageSet { url aspectRatioName } } } }`;
+  return JSON.stringify({ query });
+}
+function pickImages(set) {
+  var _a;
+  if (!set || set.length === 0) return { cover: null, thumbnail: null };
+  const cover = ((_a = set.find((s) => s.aspectRatioName === "16x9")) != null ? _a : set[0]).url;
+  const sep = cover.includes("?") ? "&" : "?";
+  return { cover, thumbnail: `${cover}${sep}w=320` };
+}
+function summaryFromNode(n) {
+  var _a, _b, _c, _d, _e;
+  return {
+    slug: n.slug,
+    title: n.title,
+    speaker: (_a = n.presenterDisplayName) != null ? _a : "",
+    published: ((_b = n.publishedAt) != null ? _b : "").slice(0, 10),
+    duration: (_c = n.duration) != null ? _c : 0,
+    topics: ((_e = (_d = n.topics) == null ? void 0 : _d.nodes) != null ? _e : []).map((t) => t.name),
+    ...pickImages(n.primaryImageSet)
+  };
+}
+function parseVideosResponse(json) {
+  var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j;
+  const root = json;
+  const v = (_a = root == null ? void 0 : root.data) == null ? void 0 : _a.videos;
+  if (!v) {
+    throw new Error(`TED GraphQL: ${(_d = (_c = (_b = root == null ? void 0 : root.errors) == null ? void 0 : _b[0]) == null ? void 0 : _c.message) != null ? _d : "no data.videos in response"}`);
+  }
+  return {
+    items: ((_e = v.nodes) != null ? _e : []).map(summaryFromNode),
+    endCursor: (_g = (_f = v.pageInfo) == null ? void 0 : _f.endCursor) != null ? _g : null,
+    hasNextPage: (_i = (_h = v.pageInfo) == null ? void 0 : _h.hasNextPage) != null ? _i : false,
+    totalCount: (_j = v.totalCount) != null ? _j : 0
+  };
+}
+
+// src/core/ted/m3u8.ts
+function pickAudioUri(master, masterUrl) {
+  var _a, _b, _c;
+  const found = {};
+  for (const line of master.split(/\r?\n/)) {
+    if (!line.startsWith("#EXT-X-MEDIA:") || !/TYPE=AUDIO/.test(line)) continue;
+    const name = (_a = /NAME="([^"]*)"/.exec(line)) == null ? void 0 : _a[1];
+    const uri2 = (_b = /URI="([^"]*)"/.exec(line)) == null ? void 0 : _b[1];
+    if (name && uri2) found[name] = uri2;
+  }
+  const uri = (_c = found["low"]) != null ? _c : found["medium"];
+  if (!uri) throw new Error("HLS master has no low/medium audio rendition");
+  return new URL(uri, masterUrl).href;
+}
+
+// src/core/ted/talkPage.ts
+var NoTranscriptError = class extends Error {
+  constructor(slug) {
+    super(`No English transcript for TED talk ${slug}`);
+    this.slug = slug;
+    this.name = "NoTranscriptError";
+  }
+};
+function stripIntro(hlsUrl) {
+  const u = new URL(hlsUrl);
+  u.searchParams.delete("intro_master_id");
+  return u.href;
+}
+function extractNextData(html) {
+  const m = /<script id="__NEXT_DATA__"[^>]*>([\s\S]*?)<\/script>/.exec(html);
+  if (!m) throw new Error("talk page has no __NEXT_DATA__");
+  return JSON.parse(m[1]);
+}
+function parseTalkPage(html, slug) {
+  var _a, _b, _c, _d, _e, _f;
+  const props = (_b = (_a = extractNextData(html)) == null ? void 0 : _a.props) == null ? void 0 : _b.pageProps;
+  const video = props == null ? void 0 : props.videoData;
+  if (!video) throw new Error(`talk page for ${slug} has no videoData`);
+  const raw = (_e = (_d = (_c = props == null ? void 0 : props.transcriptData) == null ? void 0 : _c.translation) == null ? void 0 : _d.paragraphs) != null ? _e : [];
+  const paragraphs = [];
+  for (const p of raw) {
+    const cues = (_f = p.cues) != null ? _f : [];
+    const text = cues.map((c) => c.text).join(" ").replace(/\s+/g, " ").trim();
+    if (!text || cues.length === 0) continue;
+    paragraphs.push({ text, start: cues[0].time / 1e3 });
+  }
+  if (paragraphs.length === 0) throw new NoTranscriptError(slug);
+  if (!video.hlsUrl) throw new Error(`talk ${slug} has no hlsUrl`);
+  const meta = {
+    ...summaryFromNode(video),
+    slug,
+    source: "ted",
+    url: `https://www.ted.com/talks/${slug}`,
+    license: TED_LICENSE
+  };
+  return { meta, paragraphs, masterUrl: stripIntro(video.hlsUrl) };
+}
+
+// src/services/ted/TedClient.ts
+var GRAPHQL_URL = "https://www.ted.com/graphql";
+var TedClient = class {
+  constructor(http, opts = {}) {
+    this.http = http;
+    this.lastAt = Number.NEGATIVE_INFINITY;
+    /** Serializes requests so the spacing holds under concurrent calls. */
+    this.chain = Promise.resolve();
+    this.pages = /* @__PURE__ */ new Map();
+    var _a, _b, _c;
+    this.minIntervalMs = (_a = opts.minIntervalMs) != null ? _a : 300;
+    this.now = (_b = opts.now) != null ? _b : (() => Date.now());
+    this.sleep = (_c = opts.sleep) != null ? _c : ((ms) => new Promise((r) => setTimeout(r, ms)));
+  }
+  throttled(req) {
+    const run = async () => {
+      const wait = this.lastAt + this.minIntervalMs - this.now();
+      if (wait > 0) await this.sleep(wait);
+      this.lastAt = this.now();
+      return this.http.request(req);
+    };
+    const p = this.chain.then(run, run);
+    this.chain = p.catch(() => void 0);
+    return p;
+  }
+  async getText(url) {
+    const res = await this.throttled({ url, method: "GET" });
+    if (res.status !== 200) throw new Error(`HTTP ${res.status} for ${url}`);
+    return res.text;
+  }
+  /** One page of the list, newest first. Cached in memory per cursor; failures are not cached. */
+  listPage(after) {
+    const key = after != null ? after : "";
+    const hit = this.pages.get(key);
+    if (hit) return hit;
+    const p = (async () => {
+      const res = await this.throttled({
+        url: GRAPHQL_URL,
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: buildVideosQuery(after)
+      });
+      if (res.status !== 200) throw new Error(`HTTP ${res.status} for TED GraphQL`);
+      return parseVideosResponse(JSON.parse(res.text));
+    })();
+    this.pages.set(key, p);
+    p.catch(() => this.pages.delete(key));
+    return p;
+  }
+  /**
+   * Talk page -> master playlist -> low audio playlist URL. Cue times need no intro offset
+   * because they match the intro-free stream we point at (METHOD §2.4).
+   */
+  async fetchTalk(slug) {
+    const html = await this.getText(`https://www.ted.com/talks/${slug}`);
+    const { meta, paragraphs, masterUrl } = parseTalkPage(html, slug);
+    const master = await this.getText(masterUrl);
+    return { meta, paragraphs, audioUrl: pickAudioUri(master, masterUrl) };
+  }
+};
+
+// src/ui/browser/BrowserView.ts
 var import_obsidian2 = require("obsidian");
 
 // src/core/note/parse.ts
@@ -100,6 +261,448 @@ function readRfKey(frontmatter) {
   if (typeof source !== "string" || source === "" || typeof id !== "string" || id === "") return null;
   return { source, id };
 }
+
+// src/core/note/yaml.ts
+var RESERVED = /^(true|false|yes|no|on|off|y|n|null|~)$/i;
+var NUMBER_LIKE = /^[-+]?(\d[\d_,]*\.?\d*|\.\d+)([eE][-+]?\d+)?$/;
+var SPECIAL_NUMBER = /^[-+]?(0x[0-9a-f]+|0o[0-7]+|\.inf|\.nan)$/i;
+var DATE_LIKE = /^\d{4}-\d{1,2}-\d{1,2}/;
+var LEADING_INDICATOR = /^[[{\-*&!|>'%@`?,\]}]/;
+function needsQuote(s, inFlow) {
+  if (s === "" || s !== s.trim()) return true;
+  if (/[:#"\n\r\t\\]/.test(s)) return true;
+  if (LEADING_INDICATOR.test(s)) return true;
+  if (RESERVED.test(s) || NUMBER_LIKE.test(s) || SPECIAL_NUMBER.test(s) || DATE_LIKE.test(s)) return true;
+  if (inFlow && /[,[\]{}]/.test(s)) return true;
+  return false;
+}
+function quote(s) {
+  const body = s.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\n/g, "\\n").replace(/\r/g, "\\r").replace(/\t/g, "\\t");
+  return `"${body}"`;
+}
+function yamlString(s, inFlow = false) {
+  return needsQuote(s, inFlow) ? quote(s) : s;
+}
+function yamlList(items) {
+  return `[${items.map((i) => yamlString(i, true)).join(", ")}]`;
+}
+
+// src/core/note/render.ts
+function formatTime(sec) {
+  return sec.toFixed(2);
+}
+var BAD_FILENAME_CHARS = /[\\/:*?"<>|#^[\]]/g;
+function noteFileName(meta) {
+  const title = meta.title.replace(BAD_FILENAME_CHARS, " ").replace(/\s+/g, " ").trim();
+  return `${[meta.published, title].filter((p) => p !== "").join(" ")}.md`;
+}
+function notePath(folder, meta) {
+  const f = folder.replace(/^\/+|\/+$/g, "");
+  return `${f === "" ? "" : `${f}/`}TED/${noteFileName(meta)}`;
+}
+function escapeParagraph(text) {
+  let s = text.replace(/\s+/g, " ").trim();
+  s = s.replace(/%(?=%)/g, "%\\");
+  if (/^\d+[.)]/.test(s)) s = s.replace(/^(\d+)([.)])/, "$1\\$2");
+  else if (/^[#>\-+*[<`~_=|]/.test(s)) s = `\\${s}`;
+  return s;
+}
+function renderParagraph(p) {
+  return `${escapeParagraph(p.text)} %%rf:${formatTime(p.start)}%%`;
+}
+function renderNote(talk) {
+  const { meta } = talk;
+  const fm = [
+    "---",
+    `rf-source: ${yamlString(meta.source)}`,
+    `rf-id: ${yamlString(meta.slug)}`,
+    `rf-audio: ${yamlString(talk.audioUrl)}`,
+    `rf-schema: ${RF_SCHEMA}`,
+    `title: ${yamlString(meta.title)}`,
+    `speaker: ${yamlString(meta.speaker)}`,
+    `published: ${meta.published}`,
+    `duration: ${meta.duration}`,
+    `topics: ${yamlList(meta.topics)}`,
+    `url: ${yamlString(meta.url)}`
+  ];
+  if (meta.cover !== null) fm.push(`cover: ${yamlString(meta.cover)}`);
+  if (meta.thumbnail !== null) fm.push(`thumbnail: ${yamlString(meta.thumbnail)}`);
+  fm.push(
+    `license: ${yamlString(meta.license)}`,
+    `tags: ${yamlList(["reading-feed", meta.source])}`,
+    "---"
+  );
+  const body = talk.paragraphs.filter((p) => p.text.trim() !== "").map(renderParagraph);
+  const footer = `---
+Source: [TED](<${meta.url}>) \xB7 CC BY-NC-ND 4.0`;
+  return `${fm.join("\n")}
+
+${body.length > 0 ? `${body.join("\n\n")}
+
+` : ""}${footer}
+`;
+}
+
+// src/core/browser/logic.ts
+var EMPTY_FILTER = { topic: "", keyword: "", length: "all" };
+function loadedKey(source, id) {
+  return `${source}:${id}`;
+}
+function tedKey(slug) {
+  return loadedKey("ted", slug);
+}
+function formatDuration(sec) {
+  const s = Math.max(0, Math.round(sec));
+  const m = Math.floor(s / 60);
+  return `${String(m).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
+}
+function matchesLength(duration, f) {
+  switch (f) {
+    case "all":
+      return true;
+    case "lt10":
+      return duration < 600;
+    case "10to20":
+      return duration >= 600 && duration <= 1200;
+    case "gt20":
+      return duration > 1200;
+  }
+}
+function matchesFilter(t, f) {
+  if (f.topic !== "" && !t.topics.includes(f.topic)) return false;
+  const kw = f.keyword.trim().toLowerCase();
+  if (kw !== "" && !t.title.toLowerCase().includes(kw) && !t.speaker.toLowerCase().includes(kw)) return false;
+  return matchesLength(t.duration, f.length);
+}
+function filterTalks(items, f) {
+  return items.filter((t) => matchesFilter(t, f));
+}
+function collectTopics(items) {
+  return [...new Set(items.flatMap((t) => t.topics))].sort((a, b) => a.localeCompare(b));
+}
+function uniquePath(path, exists) {
+  if (!exists(path)) return path;
+  const base = path.endsWith(".md") ? path.slice(0, -3) : path;
+  const ext = path.endsWith(".md") ? ".md" : "";
+  for (let n = 2; ; n++) {
+    const p = `${base} (${n})${ext}`;
+    if (!exists(p)) return p;
+  }
+}
+
+// src/ui/browser/BrowserView.ts
+var BROWSER_VIEW_TYPE = "reading-feed-browser";
+var MIN_VISIBLE = 8;
+var MAX_STALE_PAGES = 5;
+var LENGTH_LABELS = [
+  ["all", "\u9577\u5EA6\uFF1A\u5168\u90E8"],
+  ["lt10", "< 10 \u5206"],
+  ["10to20", "10\u201320 \u5206"],
+  ["gt20", "> 20 \u5206"]
+];
+var BrowserView = class extends import_obsidian2.ItemView {
+  constructor(leaf, deps) {
+    super(leaf);
+    this.deps = deps;
+    this.items = [];
+    this.endCursor = null;
+    this.hasNext = true;
+    this.started = false;
+    this.fetching = false;
+    this.stalled = false;
+    this.busy = false;
+    // note-loading in progress
+    this.listError = "";
+    this.filter = { ...EMPTY_FILTER };
+    this.selected = /* @__PURE__ */ new Set();
+    this.loaded = /* @__PURE__ */ new Set();
+    this.failures = [];
+    this.progress = "";
+    this.observer = null;
+  }
+  getViewType() {
+    return BROWSER_VIEW_TYPE;
+  }
+  getDisplayText() {
+    return "Reading Feed";
+  }
+  getIcon() {
+    return "newspaper";
+  }
+  async onOpen() {
+    const root = this.contentEl;
+    root.empty();
+    root.addClass("rf-browser");
+    this.scanVault();
+    const bar = root.createDiv("rf-browser-filters");
+    this.topicSel = bar.createEl("select", { cls: "dropdown rf-filter-topic" });
+    this.topicSel.onchange = () => {
+      this.filter.topic = this.topicSel.value;
+      this.onFilterChanged();
+    };
+    const kw = bar.createEl("input", { type: "text", cls: "rf-filter-keyword", placeholder: "\u6A19\u984C\uFF0F\u8B1B\u8005" });
+    kw.oninput = () => {
+      this.filter.keyword = kw.value;
+      this.onFilterChanged();
+    };
+    const lenSel = bar.createEl("select", { cls: "dropdown rf-filter-length" });
+    for (const [v, label] of LENGTH_LABELS) lenSel.createEl("option", { value: v, text: label });
+    lenSel.onchange = () => {
+      this.filter.length = lenSel.value;
+      this.onFilterChanged();
+    };
+    this.listEl = root.createDiv("rf-browser-list");
+    this.sentinel = createDiv("rf-browser-sentinel");
+    this.statusEl = root.createDiv("rf-browser-status");
+    this.moreBtn = root.createEl("button", { cls: "rf-browser-more", text: "\u518D\u8F09\u5165\u66F4\u591A" });
+    this.moreBtn.onclick = () => {
+      this.stalled = false;
+      void this.fill(true);
+    };
+    const foot = root.createDiv("rf-browser-foot");
+    this.loadBtn = foot.createEl("button", { cls: "mod-cta rf-browser-load" });
+    this.loadBtn.onclick = () => void this.loadSelected();
+    this.resultEl = foot.createDiv("rf-browser-result");
+    this.observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((e) => e.isIntersecting)) void this.fill(false);
+      },
+      { root: this.listEl, rootMargin: "200px" }
+    );
+    this.observer.observe(this.sentinel);
+    this.renderAll();
+    if (!this.started) {
+      this.started = true;
+      await this.fill(true);
+    }
+  }
+  async onClose() {
+    var _a;
+    (_a = this.observer) == null ? void 0 : _a.disconnect();
+    this.observer = null;
+  }
+  // ---- data ----
+  /** Build the loaded-set from rf-source + rf-id frontmatter of every note (METHOD §1). */
+  scanVault() {
+    var _a;
+    const { vault, metadataCache } = this.app;
+    this.loaded.clear();
+    for (const f of vault.getMarkdownFiles()) {
+      const key = readRfKey((_a = metadataCache.getFileCache(f)) == null ? void 0 : _a.frontmatter);
+      if (key) this.loaded.add(loadedKey(key.source, key.id));
+    }
+  }
+  visible() {
+    return filterTalks(this.items, this.filter);
+  }
+  onFilterChanged() {
+    this.stalled = false;
+    this.renderList();
+    void this.fill(false);
+  }
+  /**
+   * Fetch pages until enough items are visible. `manual` = user pressed the button
+   * (or first load): fetch at least one page regardless of the visible count.
+   */
+  async fill(manual) {
+    if (this.fetching || !this.hasNext || this.stalled && !manual) return;
+    this.fetching = true;
+    this.listError = "";
+    this.renderStatus();
+    try {
+      let stale = 0;
+      let first = true;
+      while (this.hasNext && stale < MAX_STALE_PAGES && (first && manual ? true : this.visible().length < MIN_VISIBLE)) {
+        first = false;
+        const before = this.visible().length;
+        const page = await this.deps.client.listPage(this.endCursor);
+        const seen = new Set(this.items.map((i) => i.slug));
+        this.items.push(...page.items.filter((i) => !seen.has(i.slug)));
+        this.endCursor = page.endCursor;
+        this.hasNext = page.hasNextPage;
+        this.refreshTopics();
+        this.renderList();
+        stale = this.visible().length > before ? 0 : stale + 1;
+        if (!manual && this.visible().length >= MIN_VISIBLE) break;
+      }
+      this.stalled = this.hasNext && stale >= MAX_STALE_PAGES;
+    } catch (e) {
+      this.listError = `\u8F09\u5165\u5217\u8868\u5931\u6557\uFF1A${e instanceof Error ? e.message : String(e)}`;
+    } finally {
+      this.fetching = false;
+      this.renderStatus();
+    }
+  }
+  async ensureFolder(path) {
+    const { vault } = this.app;
+    let cur = "";
+    for (const part of (0, import_obsidian2.normalizePath)(path).split("/").filter(Boolean)) {
+      cur = cur === "" ? part : `${cur}/${part}`;
+      if (!vault.getAbstractFileByPath(cur)) await vault.createFolder(cur);
+    }
+  }
+  async loadSelected() {
+    if (this.busy) return;
+    const todo = this.items.filter((i) => this.selected.has(i.slug) && !this.loaded.has(tedKey(i.slug)));
+    if (todo.length === 0) return;
+    this.busy = true;
+    this.failures = [];
+    const { vault } = this.app;
+    const folder = this.deps.getSettings().folder;
+    let done = 0;
+    let ok = 0;
+    for (const item of todo) {
+      this.progress = `${done} / ${todo.length}`;
+      this.renderFooter();
+      try {
+        const talk = await this.deps.client.fetchTalk(item.slug);
+        const wanted = (0, import_obsidian2.normalizePath)(notePath(folder, talk.meta));
+        await this.ensureFolder(wanted.slice(0, wanted.lastIndexOf("/")));
+        const path = uniquePath(wanted, (p) => vault.getAbstractFileByPath(p) !== null);
+        await vault.create(path, renderNote(talk));
+        this.loaded.add(tedKey(item.slug));
+        this.selected.delete(item.slug);
+        ok++;
+        this.renderList();
+      } catch (e) {
+        const reason = e instanceof NoTranscriptError ? "\u6C92\u6709\u82F1\u6587\u9010\u5B57\u7A3F" : e instanceof Error ? e.message : String(e);
+        this.failures.push({ title: item.title, reason });
+      }
+      done++;
+    }
+    this.progress = `\u5B8C\u6210\uFF1A\u6210\u529F ${ok}\uFF0F\u5931\u6557 ${this.failures.length}`;
+    this.busy = false;
+    this.renderFooter();
+  }
+  // ---- rendering ----
+  renderAll() {
+    this.refreshTopics();
+    this.renderList();
+    this.renderStatus();
+  }
+  refreshTopics() {
+    if (!this.topicSel) return;
+    const topics = collectTopics(this.items);
+    this.topicSel.empty();
+    this.topicSel.createEl("option", { value: "", text: "\u5206\u985E\uFF1A\u5168\u90E8" });
+    for (const t of topics) this.topicSel.createEl("option", { value: t, text: t });
+    this.topicSel.value = topics.includes(this.filter.topic) ? this.filter.topic : "";
+  }
+  renderList() {
+    const prevTop = this.listEl.scrollTop;
+    this.listEl.empty();
+    for (const item of this.visible()) this.renderRow(item);
+    this.listEl.appendChild(this.sentinel);
+    this.listEl.scrollTop = prevTop;
+    this.renderFooter();
+  }
+  renderRow(item) {
+    const isLoaded = this.loaded.has(tedKey(item.slug));
+    const row = this.listEl.createDiv({ cls: "rf-row" + (isLoaded ? " rf-row-loaded" : "") });
+    const cb = row.createEl("input", { type: "checkbox", cls: "rf-row-check" });
+    cb.checked = isLoaded || this.selected.has(item.slug);
+    cb.disabled = isLoaded || this.busy;
+    cb.onchange = () => {
+      if (cb.checked) this.selected.add(item.slug);
+      else this.selected.delete(item.slug);
+      this.renderFooter();
+    };
+    if (item.thumbnail) {
+      row.createEl("img", { cls: "rf-row-thumb", attr: { src: item.thumbnail, loading: "lazy", alt: "" } });
+    } else {
+      row.createDiv("rf-row-thumb rf-row-thumb-empty");
+    }
+    const body = row.createDiv("rf-row-body");
+    body.createDiv({ cls: "rf-row-title", text: item.title });
+    body.createDiv({ cls: "rf-row-meta", text: `${item.speaker} \xB7 ${item.published} \xB7 ${formatDuration(item.duration)}` });
+    const tags = body.createDiv("rf-row-tags");
+    if (isLoaded) tags.createSpan({ cls: "rf-tag rf-tag-loaded", text: "\u5DF2\u8F09\u5165" });
+    for (const t of item.topics) tags.createSpan({ cls: "rf-tag", text: t });
+  }
+  renderStatus() {
+    if (!this.statusEl) return;
+    this.statusEl.setText(
+      this.listError || (this.fetching ? "\u8F09\u5165\u4E2D\u2026" : !this.hasNext ? `\u5DF2\u5230\u5E95\uFF08\u5171 ${this.items.length} \u7BC7\uFF09` : this.visible().length === 0 && this.items.length > 0 ? "\u6C92\u6709\u7B26\u5408\u7684\u9805\u76EE" : "")
+    );
+    this.statusEl.toggleClass("rf-error", this.listError !== "");
+    const showMore = this.hasNext && !this.fetching && (this.stalled || this.listError !== "");
+    this.moreBtn.toggleClass("rf-hidden", !showMore);
+  }
+  renderFooter() {
+    if (!this.loadBtn) return;
+    const n = this.items.filter((i) => this.selected.has(i.slug) && !this.loaded.has(tedKey(i.slug))).length;
+    this.loadBtn.setText(`\u8F09\u5165 (${n})`);
+    this.loadBtn.disabled = this.busy || n === 0;
+    this.resultEl.empty();
+    if (this.progress) this.resultEl.createDiv({ text: this.progress });
+    if (this.failures.length > 0 && !this.busy) {
+      this.resultEl.createDiv({ cls: "rf-error", text: "\u5931\u6557\u6E05\u55AE\uFF1A" });
+      const ul = this.resultEl.createEl("ul", { cls: "rf-fail-list" });
+      for (const f of this.failures) ul.createEl("li", { text: `${f.title} \u2014 ${f.reason}` });
+    }
+  }
+};
+
+// src/ui/browser/installBrowser.ts
+function installBrowser(plugin, client, getSettings) {
+  plugin.registerView(BROWSER_VIEW_TYPE, (leaf) => new BrowserView(leaf, { client, getSettings }));
+  const open = async () => {
+    var _a;
+    const { workspace } = plugin.app;
+    let leaf = (_a = workspace.getLeavesOfType(BROWSER_VIEW_TYPE)[0]) != null ? _a : null;
+    if (!leaf) {
+      leaf = workspace.getRightLeaf(false);
+      if (!leaf) return;
+      await leaf.setViewState({ type: BROWSER_VIEW_TYPE, active: true });
+    }
+    await workspace.revealLeaf(leaf);
+  };
+  plugin.addCommand({ id: "open-browser", name: "\u958B\u555F Reading Feed", callback: () => void open() });
+  plugin.addRibbonIcon("newspaper", "\u958B\u555F Reading Feed", () => void open());
+}
+
+// src/ui/settings/SettingsTab.ts
+var import_obsidian3 = require("obsidian");
+var ReadingFeedSettingTab = class extends import_obsidian3.PluginSettingTab {
+  constructor(app, host) {
+    super(app, host);
+    this.host = host;
+  }
+  display() {
+    const { containerEl } = this;
+    const s = this.host.settings;
+    containerEl.empty();
+    new import_obsidian3.Setting(containerEl).setName("\u5B58\u653E\u8CC7\u6599\u593E").setDesc("\u8F09\u5165\u7684\u6587\u7AE0\u6703\u653E\u5728\u9019\u500B\u8CC7\u6599\u593E\u5E95\u4E0B\u7684 TED \u5B50\u8CC7\u6599\u593E\u3002").addText(
+      (t) => t.setValue(s.folder).onChange(async (v) => {
+        s.folder = v.trim();
+        await this.host.saveSettings();
+      })
+    );
+    new import_obsidian3.Setting(containerEl).setName("\u9810\u8A2D\u901F\u5EA6").addDropdown((d) => {
+      for (const v of [0.75, 1, 1.25, 1.5]) d.addOption(String(v), `${v}x`);
+      d.setValue(String(s.defaultSpeed)).onChange(async (v) => {
+        s.defaultSpeed = Number(v);
+        await this.host.saveSettings();
+      });
+    });
+    new import_obsidian3.Setting(containerEl).setName("\u25B6 \u9810\u8A2D\u884C\u70BA").addDropdown((d) => {
+      d.addOption("toEnd", "\u64AD\u5230\u7D50\u675F").addOption("paragraph", "\u53EA\u64AD\u9019\u6BB5");
+      d.setValue(s.playMode).onChange(async (v) => {
+        s.playMode = v;
+        await this.host.saveSettings();
+      });
+    });
+    new import_obsidian3.Setting(containerEl).setName("\u8DDF\u96A8\u6372\u52D5").addToggle(
+      (t) => t.setValue(s.followScroll).onChange(async (v) => {
+        s.followScroll = v;
+        await this.host.saveSettings();
+      })
+    );
+  }
+};
+
+// src/ui/reading/installReading.ts
+var import_obsidian4 = require("obsidian");
 
 // src/services/player/logic.ts
 function findIndex(times, t) {
@@ -194,12 +797,12 @@ var PlayerService = class {
     return () => this.listeners[event].delete(cb);
   }
   /** Synchronous: points the audio at this note's track (METHOD §3.1). Same note + url keeps the source. */
-  load(notePath, audioUrl, times) {
+  load(notePath2, audioUrl, times) {
     this.times = times;
-    const sameSource = this.path === notePath && this.url === audioUrl;
+    const sameSource = this.path === notePath2 && this.url === audioUrl;
     if (!sameSource) {
       this.detach();
-      this.path = notePath;
+      this.path = notePath2;
       this.url = audioUrl;
       this.idx = -1;
       this.stopAt = null;
@@ -4814,12 +5417,12 @@ var AttrList = class _AttrList {
   static parseAttrList(input, parsed) {
     let match;
     const attrs = {};
-    const quote = '"';
+    const quote2 = '"';
     ATTR_LIST_REGEX.lastIndex = 0;
     while ((match = ATTR_LIST_REGEX.exec(input)) !== null) {
       const name = match[1].trim();
       let value = match[2];
-      const quotedString = value.indexOf(quote) === 0 && value.lastIndexOf(quote) === value.length - 1;
+      const quotedString = value.indexOf(quote2) === 0 && value.lastIndexOf(quote2) === value.length - 1;
       let hexadecimalSequence = false;
       if (quotedString) {
         value = value.slice(1, -1);
@@ -24097,7 +24700,7 @@ function installReading(plugin, player, _getSettings) {
     if (path === null) return [];
     return app.workspace.getLeavesOfType("markdown").map((l) => l.view).filter((v) => {
       var _a;
-      return v instanceof import_obsidian2.MarkdownView && ((_a = v.file) == null ? void 0 : _a.path) === path;
+      return v instanceof import_obsidian4.MarkdownView && ((_a = v.file) == null ? void 0 : _a.path) === path;
     });
   }
   function syncView(scroll) {
@@ -24162,7 +24765,7 @@ function installReading(plugin, player, _getSettings) {
     var _a;
     if (!readRfKey(ctx.frontmatter)) return;
     const file = app.vault.getAbstractFileByPath(ctx.sourcePath);
-    if (!(file instanceof import_obsidian2.TFile)) return;
+    if (!(file instanceof import_obsidian4.TFile)) return;
     const info = await getInfo(file, ctx.frontmatter);
     const sec = ctx.getSectionInfo(el);
     if (!info || !sec) return;
@@ -24220,7 +24823,7 @@ function installReading(plugin, player, _getSettings) {
 }
 
 // main.ts
-var ReadingFeedPlugin = class extends import_obsidian3.Plugin {
+var ReadingFeedPlugin = class extends import_obsidian5.Plugin {
   constructor() {
     super(...arguments);
     this.settings = { ...DEFAULT_SETTINGS };
@@ -24230,6 +24833,8 @@ var ReadingFeedPlugin = class extends import_obsidian3.Plugin {
     const http = new ObsidianHttp();
     const player = createPlayer(this, http, () => this.settings);
     installReading(this, player, () => this.settings);
+    installBrowser(this, new TedClient(http), () => this.settings);
+    this.addSettingTab(new ReadingFeedSettingTab(this.app, this));
   }
   async loadSettings() {
     this.settings = { ...DEFAULT_SETTINGS, ...await this.loadData() };
