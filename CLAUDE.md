@@ -1,5 +1,8 @@
 # vocab-reading-feed — 幫 Vocab Tracker 插件預先算好英文文章音檔的段落時間戳（BBC 6 Minute English／TED）
 
+- **主 session**：開工前先讀 [AGENT.md](AGENT.md)（subagent 調度規則：何時派工、選 model、控制成本）。
+- **subagent**：不用讀 AGENT.md，照派工 prompt 做就好。
+
 **狀態**：active <!-- active | paused | closed；closed 時寫「結案總結在 <檔>」 -->
 
 ## 1. 開工先讀（≤ 3 份，每份 ≤ 200 行）
@@ -18,6 +21,7 @@
 | [LEDGER.md](LEDGER.md) | 已經知道什麼：判決、分母、已關閉方向 | 開新軌前 | 每次結案 |
 | [TODO.md](TODO.md) | 現在要做什麼（只放前瞻） | 每 session | 狀態一變就改 |
 | [PITFALLS.md](PITFALLS.md) | 踩過的坑 | 用新工具前 | 踩到新坑時 |
+| [AGENT.md](AGENT.md) | subagent 調度規則 | 主 session 開工時 | 調度規則變動時 |
 | [RUNBOOK.md](RUNBOOK.md) | 照什麼順序做 | 不熟這個 repo 時 | 流程變動時 |
 | `tools/` | 能寫成程式的判定 | — | — |
 
