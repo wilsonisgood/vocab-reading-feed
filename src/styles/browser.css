@@ -1,5 +1,5 @@
 /* Browser side panel (V1-3). Narrow-screen safe: no horizontal scroll. */
-.rf-browser { display: flex; flex-direction: column; height: 100%; padding: 8px; gap: 6px; overflow-x: hidden; }
+.rf-browser { display: flex; flex-direction: column; height: 100%; max-height: 100%; overflow-y: hidden; padding: 8px; gap: 6px; overflow-x: hidden; }
 .rf-browser-filters { display: flex; flex-wrap: wrap; gap: 6px; }
 .rf-browser-filters > * { flex: 1 1 90px; min-width: 0; }
 .rf-browser-list { flex: 1 1 auto; min-height: 0; overflow-y: auto; overflow-x: hidden; }
@@ -14,7 +14,12 @@
 .rf-row-tags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 2px; }
 .rf-tag { font-size: var(--font-ui-smaller); padding: 0 6px; border-radius: 8px; background: var(--background-modifier-hover); color: var(--text-muted); }
 .rf-tag-loaded { background: var(--interactive-accent); color: var(--text-on-accent); }
-.rf-browser-sentinel { height: 1px; }
+.rf-row-unavailable { opacity: 0.4; }
+.rf-tag-warn { background: var(--background-modifier-error); color: var(--text-on-accent); }
+.rf-bookmark { flex: 0 0 auto; cursor: pointer; color: var(--text-faint); display: flex; padding: 2px; }
+.rf-bookmark:hover { color: var(--text-normal); }
+.rf-bookmark.is-active { color: var(--interactive-accent); }
+.rf-bookmark.is-active svg { fill: currentColor; }
 .rf-browser-status { font-size: var(--font-ui-smaller); color: var(--text-muted); text-align: center; }
 .rf-error { color: var(--text-error); }
 .rf-hidden { display: none; }

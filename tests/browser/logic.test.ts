@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  collectTopics, EMPTY_FILTER, filterTalks, formatDuration, loadedKey, matchesLength, tedKey, uniquePath,
+  collectTopics, EMPTY_FILTER, isHidden, isUnavailable, matchesStatus, filterTalks, formatDuration, loadedKey, matchesLength, tedKey, uniquePath,
 } from "../../src/core/browser/logic";
 import type { TalkSummary } from "../../src/core/types";
 
@@ -33,7 +33,7 @@ describe("filters", () => {
   });
   it("combined and empty", () => {
     expect(filterTalks(items, EMPTY_FILTER)).toHaveLength(4);
-    expect(filterTalks(items, { topic: "science", keyword: "long", length: "gt20" }).map((x) => x.slug)).toEqual(["d"]);
+    expect(filterTalks(items, { ...EMPTY_FILTER, topic: "science", keyword: "long", length: "gt20" }).map((x) => x.slug)).toEqual(["d"]);
   });
   it("collectTopics distinct sorted", () => {
     expect(collectTopics(items)).toEqual(["climate", "design", "health", "science"]);
@@ -57,5 +57,37 @@ describe("keys, paths, time", () => {
     expect(formatDuration(65)).toBe("01:05");
     expect(formatDuration(1200)).toBe("20:00");
     expect(formatDuration(4503)).toBe("75:03");
+  });
+});
+
+describe("status filter, hidden, unavailable", () => {
+  const items = [t("a"), t("b"), t("c"), t("d")];
+  const ctx = {
+    loaded: new Set([tedKey("b"), tedKey("c")]),
+    read: new Set([tedKey("c")]),
+    favorites: new Set([tedKey("a"), tedKey("c")]),
+  };
+  const slugs = (status: "all" | "unloaded" | "unread" | "read" | "favorite", hidden = new Set<string>()) =>
+    filterTalks(items, { ...EMPTY_FILTER, status }, ctx, hidden).map((x) => x.slug);
+  it("each status", () => {
+    expect(slugs("all")).toEqual(["a", "b", "c", "d"]);
+    expect(slugs("unloaded")).toEqual(["a", "d"]);
+    expect(slugs("unread")).toEqual(["b"]);
+    expect(slugs("read")).toEqual(["c"]);
+    expect(slugs("favorite")).toEqual(["a", "c"]);
+  });
+  it("favorite works for unloaded talks", () => {
+    expect(matchesStatus("a", "favorite", ctx)).toBe(true);
+    expect(matchesStatus("a", "unread", ctx)).toBe(false);
+  });
+  it("builtin hidden list removes talks", () => {
+    expect(slugs("all", new Set(["b"]))).toEqual(["a", "c", "d"]);
+    expect(isHidden("b", new Set(["b"]))).toBe(true);
+    expect(isHidden("a", new Set(["b"]))).toBe(false);
+  });
+  it("discovered no-transcript are unavailable but still listed", () => {
+    expect(isUnavailable("a", ["a"])).toBe(true);
+    expect(isUnavailable("b", ["a"])).toBe(false);
+    expect(slugs("all")).toContain("a");
   });
 });
