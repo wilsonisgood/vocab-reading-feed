@@ -1,0 +1,31 @@
+/* Reading mode: playback bar, per-paragraph play button, active highlight (METHOD §3). */
+.rf-bar {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 4px 12px;
+  border-bottom: 1px solid var(--background-modifier-border);
+  background: var(--background-primary);
+}
+.rf-bar button { padding: 2px 8px; }
+.rf-bar-pos { min-width: 4.5em; text-align: center; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.rf-bar-follow.is-active { background: var(--interactive-accent); color: var(--text-on-accent); }
+.rf-bar .rf-hidden { display: none; }
+.rf-play {
+  display: inline-block;
+  margin-right: 6px;
+  padding: 0 6px;
+  height: auto;
+  font-size: 0.8em;
+  line-height: 1.4;
+  cursor: pointer;
+  box-shadow: none;
+  opacity: 0.55;
+}
+.rf-play:hover { opacity: 1; }
+.rf-active {
+  background: var(--text-highlight-bg);
+  border-radius: 4px;
+}
