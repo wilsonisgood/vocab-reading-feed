@@ -10,7 +10,7 @@ v1 目標：**TED、只串流**。面板列出 TED 演講（標題、講者、�
 | 盤點 BBC + TED（`pipeline/tools/survey.py`） | ✅ | — |
 | V1-0 插件骨架 | ✅ | — |
 | V1-1 TED client（純邏輯）＋片頭偏移驗證 | 🔵 | sonnet 背景；worktree `.claude/worktrees/v1-ted`（`feat/v1-ted`）；看該分支 git log |
-| V1-2 md 產生器（純邏輯） | 🔵 | sonnet 背景；worktree `.claude/worktrees/v1-note`（`feat/v1-note`）；看該分支 git log |
+| V1-2 md 產生器（純邏輯） | ✅ | — |
 | V1-3 文章瀏覽面板 | ⬜ | V1-1、V1-2 |
 | V1-4 播放器與同步 | ⬜ | V1-2（可先用手寫的範例 md 開發） |
 | V1-5 實機驗證（桌面＋iPhone） | ⬜ | V1-3、V1-4 |
@@ -33,9 +33,9 @@ v1 目標：**TED、只串流**。面板列出 TED 演講（標題、講者、�
       驗證用的腳本放 `pipeline/tools/ted_intro_check.py`。
 
 ## V1-2 md 產生器（`src/core/note/*`）
-- [ ] `Talk` → md 字串（METHOD §1），含 frontmatter、每段 `%%rf:t%%`、結尾出處。檔名規則與非法字元處理。
-- [ ] 反向：從筆記原始文字解析出 `{line, start}[]`（給 V1-4 用）。
-- [ ] 測試：產生 → 解析來回一致；標題含特殊字元；段落內含 `%%` 等邊界情況。
+- [x] `Talk` → md 字串（METHOD §1），含 frontmatter、每段 `%%rf:t%%`、結尾出處。檔名規則與非法字元處理。
+- [x] 反向：從筆記原始文字解析出 `{line, start}[]`（給 V1-4 用）。
+- [x] 測試：產生 → 解析來回一致；標題含特殊字元；段落內含 `%%` 等邊界情況。
 
 ## V1-3 文章瀏覽面板（`src/ui/browser/*`）
 - [ ] 右側欄 ItemView + 指令「開啟 Reading Feed」+ ribbon 圖示。
