@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { findIndex, followReducer, shouldFollow, showResume, stopTimeFor, type FollowState } from "../../src/services/player/logic";
+import { findIndex, followReducer, shouldFollow, showResume, stepIndex, stopTimeFor, type FollowState } from "../../src/services/player/logic";
 
 const times = [
   { line: 0, start: 0.7 },
@@ -47,5 +47,16 @@ describe("follow state machine", () => {
   });
   it("returns same object when nothing changes", () => {
     expect(followReducer(on, "resume")).toBe(on);
+  });
+});
+
+describe("stepIndex", () => {
+  it("clamps and handles empty / before-first", () => {
+    expect(stepIndex(-1, 3, -1)).toBe(0);
+    expect(stepIndex(-1, 3, 1)).toBe(0);
+    expect(stepIndex(0, 3, -1)).toBe(0);
+    expect(stepIndex(2, 3, 1)).toBe(2);
+    expect(stepIndex(1, 3, 1)).toBe(2);
+    expect(stepIndex(0, 0, 1)).toBe(-1);
   });
 });

@@ -2,7 +2,7 @@
 // element, hls.js) are injected so this runs in node tests with fakes.
 import type { ParagraphTime, ReadingFeedSettings } from "../../core/types";
 import type { HttpPort } from "../../core/ports";
-import { findIndex, followReducer, shouldFollow, stopTimeFor, type FollowEvent, type FollowState } from "./logic";
+import { findIndex, followReducer, shouldFollow, stepIndex, stopTimeFor, type FollowEvent, type FollowState } from "./logic";
 
 /** Minimal slice of HTMLAudioElement used here. */
 export interface AudioLike {
@@ -27,7 +27,8 @@ export interface HlsHandle {
 /** Mount an HLS playlist on a media element via MSE; must attach synchronously (iOS-style gesture rules). */
 export type HlsAttacher = (audio: AudioLike, url: string, http: HttpPort) => HlsHandle | null;
 
-export type PlayerEvent = "index" | "state" | "follow";
+/** "started" fires each time play() is requested (UI de-duplicates for the read mark, METHOD §3.4). */
+export type PlayerEvent = "index" | "state" | "follow" | "started";
 
 const HLS_MIME = "application/vnd.apple.mpegurl";
 
@@ -52,6 +53,7 @@ export class PlayerService {
     index: new Set(),
     state: new Set(),
     follow: new Set(),
+    started: new Set(),
   };
   private readonly onTime = () => this.handleTime();
   private readonly onPlayState = () => this.emit("state");
@@ -116,7 +118,12 @@ export class PlayerService {
       this.emit("index");
       this.emit("follow");
     } else {
-      this.idx = findIndex(times, this.audio.currentTime);
+      // Same track: only the timestamp table is refreshed (e.g. filled in after a note switch).
+      const idx = findIndex(times, this.audio.currentTime);
+      if (idx !== this.idx) {
+        this.idx = idx;
+        this.emit("index");
+      }
     }
     this.emit("state");
   }
@@ -131,6 +138,34 @@ export class PlayerService {
     this.setIndex(index);
     this.dispatchFollow("resume");
     this.emit("state");
+  }
+
+  /** Play the loaded track from 0 without needing a timestamp table (sync, for note switches; METHOD §3.1). */
+  playStart(): void {
+    if (this.path === null) return;
+    this.audio.currentTime = 0;
+    this.stopAt = null;
+    this.audio.playbackRate = this.rate;
+    this.safePlay();
+    this.dispatchFollow("resume");
+    this.emit("state");
+  }
+
+  /** Move to paragraph `index` without starting playback; keeps playing if already playing. */
+  seekTo(index: number): void {
+    if (this.path === null || index < 0 || index >= this.times.length) return;
+    if (!this.audio.paused) return this.playFrom(index);
+    this.audio.currentTime = this.times[index].start;
+    this.stopAt = null;
+    this.setIndex(index);
+    this.dispatchFollow("resume");
+    this.emit("state");
+  }
+
+  /** Previous / next paragraph (-1 / +1): continues playing when playing, else only moves the position. */
+  step(dir: -1 | 1): void {
+    const next = stepIndex(this.idx, this.times.length, dir);
+    if (next >= 0) this.seekTo(next);
   }
 
   toggle(): void {
@@ -215,6 +250,7 @@ export class PlayerService {
 
   private safePlay(): void {
     try {
+      this.emit("started");
       const p = this.audio.play();
       if (p && typeof p.catch === "function") p.catch(() => this.emit("state"));
     } catch {
