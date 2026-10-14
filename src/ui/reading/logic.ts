@@ -1,4 +1,5 @@
 // Pure helpers for the floating bar (METHOD §3.1, §3.4): no DOM, no obsidian.
+import type { DockPos } from "../../core/types";
 
 export interface NoteRef {
   path: string;
@@ -40,4 +41,16 @@ export function todayString(d: Date = new Date()): string {
 /** Toggle membership, returning a new array. */
 export function toggleFavorite(list: readonly string[], key: string): string[] {
   return list.includes(key) ? list.filter((k) => k !== key) : [...list, key];
+}
+
+/** Bubble centre (px inside a w×h view) → stored fractions, keeping the whole bubble (radius r) inside. */
+export function clampDock(px: number, py: number, w: number, h: number, r: number): DockPos {
+  const fx = w > 2 * r ? (Math.min(w - r, Math.max(r, px)) - r) / (w - 2 * r) : 0.5;
+  const fy = h > 2 * r ? (Math.min(h - r, Math.max(r, py)) - r) / (h - 2 * r) : 0.5;
+  return { x: fx, y: fy };
+}
+
+/** Card opens toward the roomier side: leftward when the bubble is on the right half, upward on the lower half. */
+export function cardSide(p: DockPos): { left: boolean; up: boolean } {
+  return { left: p.x >= 0.5, up: p.y >= 0.5 };
 }

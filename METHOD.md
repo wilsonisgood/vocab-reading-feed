@@ -91,7 +91,7 @@ POST https://www.ted.com/graphql   content-type: application/json
 - **內建清單**：`pipeline/tools/ted_no_transcript.py` 對全部 talk 逐篇檢查，產出 `src/core/ted/noTranscript.json`
   （只有 slug）。清單裡的 talk **不列在面板上**。要更新就重跑腳本、重新 build 發版。
 - **執行期發現的**（清單之後才上架的新 talk）：載入失敗是 `NoTranscriptError` → slug 記進設定 `noTranscript`，
-  那一列**反灰、不能勾**，標示「沒有英文逐字稿」。其他錯誤不記（下次可重試）。
+  之後**跟內建清單一樣不列出**（2026-10-14 round 2 改；原本是反灰）。當次的失敗清單仍會寫出來。其他錯誤不記（下次可重試）。
 
 ## 3. 播放與同步
 
@@ -100,18 +100,28 @@ POST https://www.ted.com/graphql   content-type: application/json
 - 能不能原生播 HLS：`audio.canPlayType("application/vnd.apple.mpegurl")` 非空（iPhone／iPad）→ 直接設 `src`；
   否則（桌面、Android）用 **hls.js**（`hls.light` 版）掛 MSE。hls.js 載入失敗時，改用以 `requestUrl`
   實作的自訂 loader 重試一次。
-- **懸浮播放列**（2026-10-14 使用者訂定，取代原本只在播放後才出現的頂端播放列）：
-  - rf 筆記在閱讀模式**一打開就有**，捲動時一直浮在畫面上；桌面靠上、手機／平板靠下（依 `Platform.isMobile`，不看寬度）。
-  - 主按鈕：上一篇、上一段、播放／暫停、下一段、下一篇；另有 ☆ 收藏、「⋯」收速度、跟隨、停止、目前段落 n / N。
-  - 播放／暫停在沒播過的筆記上 = 從第一段開始播這篇。
+- **懸浮播放器**（2026-10-14 使用者訂定；round 2 改成圓鈕＋卡片，取代整條膠囊列）：
+  - rf 筆記在閱讀模式**一打開就有**，平常是一顆**灰底圓鈕**（耳機圖示：播放中藍色、其他時候白色）。
+    預設位置：桌面右上、手機／平板右下（依 `Platform.isMobile`，不看寬度）。**可拖動**，位置存在設定
+    `dockPos.desktop`／`dockPos.mobile`（圓心佔視圖寬高的比例，所有 rf 筆記共用）。
+  - 點圓鈕展開卡片（往空間大的一側開）：狀態（正在播放／已暫停／未播放，播的是別篇就加「（另一篇）」）、
+    **正在播的那篇的標題**、段落 n / N、速度、目前段落文字；主按鈕：上一篇、上一段、播放／暫停、下一段、下一篇；
+    另有收藏、「⋯」（速度、跟隨、停止）。播的是別篇時多出「播放這篇」「跳到該篇 ›」（點標題也可以跳）。
+  - 卡片的按鈕一律作用在**播放器裡的那篇**；播放器空著時才作用在畫面上這篇（播放 = 從第一段開始播）。
+  - 右側欄列表：播放器裡的那篇高亮，標題前加 🔊（播放中藍色）。
   - 上／下一段：播放中就接著播；暫停中只移動位置（高亮跟著走）。
   - 上／下一篇：同資料夾的 rf 筆記，依 `published` 新到舊排序（下一篇 = 較舊）；開啟該筆記並從頭播。
     iOS 要在點擊當下同步呼叫 `play()`（§3.2）：音源網址從 metadataCache 的 frontmatter 同步取得，時間戳表之後再補。
 - **自動閱讀模式**：開啟 rf 筆記時若不在閱讀模式就切過去（設定 `autoReadingMode`，預設開）。
-- **屬性區**：rf 筆記整塊隱藏（只靠插件加的 class + CSS，不改 md）。
+- **屬性區**：rf 筆記整塊隱藏（只靠插件加的 class + CSS，不改 md）。Obsidian 用
+  `.markdown-preview-view.show-properties .metadata-container { display: var(--metadata-display-reading) }`，
+  權重比單純選擇器高 → 在 `.rf-note` 上把 `--metadata-display-reading`／`--metadata-display-editing` 設成 `none`。
 
 ### 3.2 每段 ▶
 - markdown post-processor：筆記有 `rf-source` 才處理；段落有 `%%rf:t%%` 才加 ▶（class `rf-play`）。
+- ▶ 與高亮用**段落序號**（第幾個時間戳，`data-rf-idx`）對應，⛔ 不用行號：第一次播放寫 `rf-read` 時
+  Obsidian 會重排 frontmatter（`[a, b]` 展開成多行），已渲染段落上的行號全部失效。
+  序號從插件自己的時間戳表（依 mtime 失效）算；`getSectionInfo().text` 在 post-processor 當下可能還是空字串。
 - 點 ▶：`currentTime = t` 並播放，播完整篇（預設）；設定可改成「只播這段」（播到下一段的 t 就暫停）。
 - iOS 只允許在使用者點擊的當下開始發聲 → `play()` 必須在 click handler 裡同步呼叫，不能先 await 別的事。
 

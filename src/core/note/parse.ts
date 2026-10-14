@@ -52,3 +52,9 @@ export function readRfKey(
   if (typeof source !== "string" || source === "" || typeof id !== "string" || id === "") return null;
   return { source, id };
 }
+
+/** Paragraph text of each timestamp, marker stripped (for the player's "now reading" line). */
+export function timestampTexts(text: string, times: readonly ParagraphTime[]): string[] {
+  const lines = text.split(/\r?\n/);
+  return times.map((t) => (lines[t.line] ?? "").replace(TIMESTAMP, "").trim());
+}

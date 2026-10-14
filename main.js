@@ -35,7 +35,8 @@ var DEFAULT_SETTINGS = {
   followScroll: true,
   autoReadingMode: true,
   favorites: [],
-  noTranscript: []
+  noTranscript: [],
+  dockPos: { desktop: null, mobile: null }
 };
 var RF_READ_KEY = "rf-read";
 
@@ -264,6 +265,13 @@ function readRfKey(frontmatter) {
   const id = frontmatter == null ? void 0 : frontmatter["rf-id"];
   if (typeof source !== "string" || source === "" || typeof id !== "string" || id === "") return null;
   return { source, id };
+}
+function timestampTexts(text, times) {
+  const lines = text.split(/\r?\n/);
+  return times.map((t) => {
+    var _a;
+    return ((_a = lines[t.line]) != null ? _a : "").replace(TIMESTAMP, "").trim();
+  });
 }
 
 // src/core/note/yaml.ts
@@ -579,9 +587,6 @@ function matchesStatus(slug, status2, ctx) {
 function isHidden(slug, builtin) {
   return builtin.has(slug);
 }
-function isUnavailable(slug, discovered) {
-  return discovered.includes(slug);
-}
 function loadedKey(source, id) {
   return `${source}:${id}`;
 }
@@ -667,6 +672,8 @@ var BrowserView = class extends import_obsidian2.ItemView {
     this.scanTimer = null;
     this.failures = [];
     this.progress = "";
+    this.rowEls = /* @__PURE__ */ new Map();
+    this.offPlayer = null;
     this.onScroll = () => this.checkBottom();
   }
   getViewType() {
@@ -679,6 +686,7 @@ var BrowserView = class extends import_obsidian2.ItemView {
     return "newspaper";
   }
   async onOpen() {
+    var _a, _b, _c;
     const root = this.contentEl;
     root.empty();
     root.addClass("rf-browser");
@@ -730,6 +738,7 @@ var BrowserView = class extends import_obsidian2.ItemView {
       })
     );
     this.registerEvent(this.app.workspace.on(FAVORITES_CHANGED, () => this.renderList()));
+    this.offPlayer = (_c = (_b = (_a = this.deps).onPlayerChange) == null ? void 0 : _b.call(_a, () => this.markPlaying())) != null ? _c : null;
     this.renderAll();
     if (!this.started) {
       this.started = true;
@@ -738,10 +747,12 @@ var BrowserView = class extends import_obsidian2.ItemView {
     this.checkBottom();
   }
   async onClose() {
-    var _a;
+    var _a, _b;
     (_a = this.listEl) == null ? void 0 : _a.removeEventListener("scroll", this.onScroll);
     this.contentEl.removeEventListener("scroll", this.onScroll);
     if (this.scanTimer !== null) window.clearTimeout(this.scanTimer);
+    (_b = this.offPlayer) == null ? void 0 : _b.call(this);
+    this.offPlayer = null;
   }
   // ---- data ----
   /** Build the loaded-set from rf-source + rf-id frontmatter of every note (METHOD §1). */
@@ -764,7 +775,8 @@ var BrowserView = class extends import_obsidian2.ItemView {
     return { loaded: this.loaded, read: this.read, favorites: new Set(this.deps.getSettings().favorites) };
   }
   visible() {
-    return filterTalks(this.items, this.filter, this.statusContext(), NO_TRANSCRIPT);
+    const hidden = /* @__PURE__ */ new Set([...NO_TRANSCRIPT, ...this.deps.getSettings().noTranscript]);
+    return filterTalks(this.items, this.filter, this.statusContext(), hidden);
   }
   /** Fetch the next page when either scroll container is near its bottom (or not scrollable). */
   checkBottom() {
@@ -892,19 +904,19 @@ var BrowserView = class extends import_obsidian2.ItemView {
   renderList() {
     const prevTop = this.listEl.scrollTop;
     this.listEl.empty();
+    this.rowEls.clear();
     for (const item of this.visible()) this.renderRow(item);
+    this.markPlaying();
     this.listEl.scrollTop = prevTop;
     this.renderFooter();
   }
   renderRow(item) {
     const isLoaded = this.loaded.has(tedKey(item.slug));
-    const unavailable = !isLoaded && isUnavailable(item.slug, this.deps.getSettings().noTranscript);
-    const row = this.listEl.createDiv({
-      cls: "rf-row" + (isLoaded ? " rf-row-loaded" : "") + (unavailable ? " rf-row-unavailable" : "")
-    });
+    const row = this.listEl.createDiv({ cls: "rf-row" + (isLoaded ? " rf-row-loaded" : "") });
+    this.rowEls.set(tedKey(item.slug), row);
     const cb = row.createEl("input", { type: "checkbox", cls: "rf-row-check" });
     cb.checked = isLoaded || this.selected.has(item.slug);
-    cb.disabled = isLoaded || unavailable || this.busy;
+    cb.disabled = isLoaded || this.busy;
     cb.onchange = () => {
       if (cb.checked) this.selected.add(item.slug);
       else this.selected.delete(item.slug);
@@ -916,11 +928,12 @@ var BrowserView = class extends import_obsidian2.ItemView {
       row.createDiv("rf-row-thumb rf-row-thumb-empty");
     }
     const body = row.createDiv("rf-row-body");
-    body.createDiv({ cls: "rf-row-title", text: item.title });
+    const title = body.createDiv({ cls: "rf-row-title" });
+    (0, import_obsidian2.setIcon)(title.createSpan({ cls: "rf-row-now", attr: { "aria-label": "\u64AD\u653E\u4E2D" } }), "volume-2");
+    title.appendText(item.title);
     body.createDiv({ cls: "rf-row-meta", text: `${item.speaker} \xB7 ${item.published} \xB7 ${formatDuration(item.duration)}` });
     const tags = body.createDiv("rf-row-tags");
     if (isLoaded) tags.createSpan({ cls: "rf-tag rf-tag-loaded", text: "\u5DF2\u8F09\u5165" });
-    if (unavailable) tags.createSpan({ cls: "rf-tag rf-tag-warn", text: "\u6C92\u6709\u82F1\u6587\u9010\u5B57\u7A3F" });
     for (const t of item.topics) tags.createSpan({ cls: "rf-tag", text: t });
     const fav = this.deps.getSettings().favorites.includes(tedKey(item.slug));
     const bm = row.createDiv({
@@ -929,6 +942,15 @@ var BrowserView = class extends import_obsidian2.ItemView {
     });
     (0, import_obsidian2.setIcon)(bm, "bookmark");
     bm.onclick = () => void this.toggleFavorite(item.slug);
+  }
+  /** Highlight the talk in the player; cheap enough to run on every player event. */
+  markPlaying() {
+    var _a, _b, _c;
+    const now2 = (_c = (_b = (_a = this.deps).nowPlaying) == null ? void 0 : _b.call(_a)) != null ? _c : null;
+    for (const [key, row] of this.rowEls) {
+      row.toggleClass("rf-row-playing", (now2 == null ? void 0 : now2.key) === key);
+      row.toggleClass("is-playing", (now2 == null ? void 0 : now2.key) === key && now2.playing);
+    }
   }
   renderStatus() {
     if (!this.statusEl) return;
@@ -955,8 +977,8 @@ var BrowserView = class extends import_obsidian2.ItemView {
 };
 
 // src/ui/browser/installBrowser.ts
-function installBrowser(plugin, client, getSettings, saveSettings = () => Promise.resolve()) {
-  plugin.registerView(BROWSER_VIEW_TYPE, (leaf) => new BrowserView(leaf, { client, getSettings, saveSettings }));
+function installBrowser(plugin, client, getSettings, saveSettings = () => Promise.resolve(), player = {}) {
+  plugin.registerView(BROWSER_VIEW_TYPE, (leaf) => new BrowserView(leaf, { client, getSettings, saveSettings, ...player }));
   const open = async () => {
     var _a;
     const { workspace } = plugin.app;
@@ -24995,62 +25017,6 @@ var attachHls = (audio, url, http) => {
 
 // src/ui/reading/bar.ts
 var import_obsidian4 = require("obsidian");
-var SPEEDS = [0.75, 1, 1.25, 1.5];
-function createBar(player, path, a) {
-  const el = createDiv({ cls: ["rf-bar", import_obsidian4.Platform.isMobile ? "rf-bar-bottom" : "rf-bar-top"] });
-  const btn = (cls, icon, label, fn) => {
-    const b = el.createEl("button", { cls: ["rf-bar-btn", cls], attr: { "aria-label": label } });
-    (0, import_obsidian4.setIcon)(b, icon);
-    b.addEventListener("click", (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      fn();
-    });
-    return b;
-  };
-  const prevNote = btn("rf-bar-prev-note", "skip-back", "\u4E0A\u4E00\u7BC7", () => a.prevNote());
-  const prevPara = btn("rf-bar-prev", "chevron-left", "\u4E0A\u4E00\u6BB5", () => a.prevPara());
-  const play = btn("rf-bar-play", "play", "\u64AD\u653E\uFF0F\u66AB\u505C", () => a.toggle());
-  const nextPara = btn("rf-bar-next", "chevron-right", "\u4E0B\u4E00\u6BB5", () => a.nextPara());
-  const nextNote = btn("rf-bar-next-note", "skip-forward", "\u4E0B\u4E00\u7BC7", () => a.nextNote());
-  const pos = el.createSpan({ cls: "rf-bar-pos" });
-  const fav = btn("rf-bar-fav", "bookmark", "\u6536\u85CF", () => a.toggleFavorite());
-  const more = btn("rf-bar-more", "more-horizontal", "\u66F4\u591A", () => void 0);
-  const back = el.createEl("button", { cls: ["rf-bar-resume", "rf-hidden"], text: "\u56DE\u5230\u6717\u8B80\u4F4D\u7F6E" });
-  back.addEventListener("click", () => a.resume());
-  more.addEventListener("click", (e) => {
-    const m = new import_obsidian4.Menu();
-    for (const s of SPEEDS) {
-      m.addItem((i) => i.setTitle(`${s}x`).setChecked(player.speed === s).onClick(() => player.setSpeed(s)));
-    }
-    m.addSeparator();
-    m.addItem(
-      (i) => i.setTitle("\u8DDF\u96A8\u6372\u52D5").setChecked(player.followState.enabled).onClick(() => player.setFollowEnabled(!player.followState.enabled))
-    );
-    m.addItem((i) => i.setTitle("\u505C\u6B62").setIcon("square").onClick(() => a.stop()));
-    m.showAtMouseEvent(e);
-  });
-  let lastIcon = "";
-  const update = () => {
-    const mine = player.notePath === path;
-    const playing = mine && player.playing;
-    const icon = playing ? "pause" : "play";
-    if (icon !== lastIcon) {
-      (0, import_obsidian4.setIcon)(play, icon);
-      lastIcon = icon;
-    }
-    const n = mine ? player.paragraphs.length : a.count();
-    pos.setText(`${mine ? Math.max(player.currentIndex + 1, 0) : 0} / ${n}`);
-    fav.toggleClass("is-active", a.isFavorite());
-    prevNote.toggleClass("rf-disabled", !a.hasPrev());
-    nextNote.toggleClass("rf-disabled", !a.hasNext());
-    prevPara.toggleClass("rf-disabled", n === 0);
-    nextPara.toggleClass("rf-disabled", n === 0);
-    back.toggleClass("rf-hidden", !(mine && showResume(player.followState)));
-  };
-  update();
-  return { el, update };
-}
 
 // src/ui/reading/logic.ts
 function pubKey(v) {
@@ -25080,6 +25046,170 @@ function todayString(d = /* @__PURE__ */ new Date()) {
 function toggleFavorite(list, key) {
   return list.includes(key) ? list.filter((k) => k !== key) : [...list, key];
 }
+function clampDock(px, py, w, h, r) {
+  const fx = w > 2 * r ? (Math.min(w - r, Math.max(r, px)) - r) / (w - 2 * r) : 0.5;
+  const fy = h > 2 * r ? (Math.min(h - r, Math.max(r, py)) - r) / (h - 2 * r) : 0.5;
+  return { x: fx, y: fy };
+}
+function cardSide(p) {
+  return { left: p.x >= 0.5, up: p.y >= 0.5 };
+}
+
+// src/ui/reading/bar.ts
+var SPEEDS = [0.75, 1, 1.25, 1.5];
+var R = 20;
+var DRAG_SLOP = 5;
+var cardOpen = false;
+function createBar(player, path, a) {
+  const el = createDiv({ cls: ["rf-dock", import_obsidian4.Platform.isMobile ? "rf-dock-mobile" : "rf-dock-desktop"] });
+  const bubble = el.createEl("button", { cls: "rf-dock-bubble", attr: { "aria-label": "\u64AD\u653E\u5668" } });
+  (0, import_obsidian4.setIcon)(bubble, "headphones");
+  const card = el.createDiv("rf-dock-card");
+  const btn = (parent, cls, icon, label, fn) => {
+    const b = parent.createEl("button", { cls: ["rf-dock-btn", cls], attr: { "aria-label": label } });
+    (0, import_obsidian4.setIcon)(b, icon);
+    b.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      fn();
+    });
+    return b;
+  };
+  const head = card.createDiv("rf-dock-head");
+  const status2 = head.createSpan({ cls: "rf-dock-status" });
+  btn(head, "rf-dock-close", "x", "\u6536\u8D77", () => setOpen(false));
+  const title = card.createDiv({ cls: "rf-dock-title" });
+  title.addEventListener("click", () => {
+    if (a.info().elsewhere) a.jump();
+  });
+  const meta = card.createDiv({ cls: "rf-dock-meta" });
+  const snippet = card.createDiv({ cls: "rf-dock-snippet" });
+  const ctrl = card.createDiv("rf-dock-ctrl");
+  const prevNote = btn(ctrl, "rf-bar-prev-note", "skip-back", "\u4E0A\u4E00\u7BC7", () => a.prevNote());
+  const prevPara = btn(ctrl, "rf-bar-prev", "chevron-left", "\u4E0A\u4E00\u6BB5", () => a.prevPara());
+  const play = btn(ctrl, "rf-bar-play", "play", "\u64AD\u653E\uFF0F\u66AB\u505C", () => a.toggle());
+  const nextPara = btn(ctrl, "rf-bar-next", "chevron-right", "\u4E0B\u4E00\u6BB5", () => a.nextPara());
+  const nextNote = btn(ctrl, "rf-bar-next-note", "skip-forward", "\u4E0B\u4E00\u7BC7", () => a.nextNote());
+  const extra = card.createDiv("rf-dock-extra");
+  const fav = btn(extra, "rf-bar-fav", "bookmark", "\u6536\u85CF", () => a.toggleFavorite());
+  const more = btn(extra, "rf-bar-more", "more-horizontal", "\u66F4\u591A", () => void 0);
+  const here = extra.createEl("button", { cls: "rf-dock-text", text: "\u64AD\u653E\u9019\u7BC7" });
+  here.addEventListener("click", () => a.playHere());
+  const jump = extra.createEl("button", { cls: "rf-dock-text rf-dock-jump", text: "\u8DF3\u5230\u8A72\u7BC7 \u203A" });
+  jump.addEventListener("click", () => a.jump());
+  const back = card.createEl("button", { cls: "rf-dock-resume", text: "\u56DE\u5230\u6717\u8B80\u4F4D\u7F6E" });
+  back.addEventListener("click", () => a.resume());
+  more.addEventListener("click", (e) => {
+    const m = new import_obsidian4.Menu();
+    for (const s of SPEEDS) {
+      m.addItem((i) => i.setTitle(`${s}x`).setChecked(player.speed === s).onClick(() => player.setSpeed(s)));
+    }
+    m.addSeparator();
+    m.addItem(
+      (i) => i.setTitle("\u8DDF\u96A8\u6372\u52D5").setChecked(player.followState.enabled).onClick(() => player.setFollowEnabled(!player.followState.enabled))
+    );
+    m.addItem((i) => i.setTitle("\u505C\u6B62").setIcon("square").onClick(() => a.stop()));
+    m.showAtMouseEvent(e);
+  });
+  const place = () => {
+    const p = a.getPos();
+    el.toggleClass("rf-dock-placed", p !== null);
+    if (p) {
+      el.style.left = `calc((100% - ${2 * R}px) * ${p.x})`;
+      el.style.top = `calc((100% - ${2 * R}px) * ${p.y})`;
+    } else {
+      el.style.left = "";
+      el.style.top = "";
+    }
+    const side = cardSide(p != null ? p : import_obsidian4.Platform.isMobile ? { x: 1, y: 1 } : { x: 1, y: 0 });
+    el.toggleClass("rf-dock-card-left", side.left);
+    el.toggleClass("rf-dock-card-up", side.up);
+  };
+  let drag = null;
+  let swallowClick = false;
+  bubble.addEventListener("pointerdown", (e) => {
+    const r = bubble.getBoundingClientRect();
+    drag = { id: e.pointerId, x0: e.clientX, y0: e.clientY, dx: e.clientX - (r.left + R), dy: e.clientY - (r.top + R), moving: false };
+    bubble.setPointerCapture(e.pointerId);
+  });
+  const centre = (e) => {
+    var _a;
+    const host = (_a = el.parentElement) == null ? void 0 : _a.getBoundingClientRect();
+    if (!host || !drag) return null;
+    return clampDock(e.clientX - drag.dx - host.left, e.clientY - drag.dy - host.top, host.width, host.height, R);
+  };
+  bubble.addEventListener("pointermove", (e) => {
+    if (!drag || drag.id !== e.pointerId) return;
+    if (!drag.moving && Math.hypot(e.clientX - drag.x0, e.clientY - drag.y0) < DRAG_SLOP) return;
+    drag.moving = true;
+    el.addClass("rf-dock-dragging");
+    const p = centre(e);
+    if (!p) return;
+    el.addClass("rf-dock-placed");
+    el.style.left = `calc((100% - ${2 * R}px) * ${p.x})`;
+    el.style.top = `calc((100% - ${2 * R}px) * ${p.y})`;
+  });
+  const endDrag = (e) => {
+    if (!drag || drag.id !== e.pointerId) return;
+    if (drag.moving) {
+      const p = centre(e);
+      if (p) a.setPos(p);
+      swallowClick = true;
+    }
+    drag = null;
+    el.removeClass("rf-dock-dragging");
+    place();
+  };
+  bubble.addEventListener("pointerup", endDrag);
+  bubble.addEventListener("pointercancel", endDrag);
+  bubble.addEventListener("click", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (swallowClick) {
+      swallowClick = false;
+      return;
+    }
+    setOpen(!cardOpen);
+  });
+  const setOpen = (open) => {
+    cardOpen = open;
+    el.toggleClass("is-open", open);
+  };
+  let lastIcon = "";
+  const update = () => {
+    const mine = player.notePath === path;
+    const target = player.notePath !== null;
+    const icon = player.playing ? "pause" : "play";
+    if (icon !== lastIcon) {
+      (0, import_obsidian4.setIcon)(play, icon);
+      lastIcon = icon;
+    }
+    bubble.toggleClass("is-playing", player.playing);
+    el.toggleClass("is-open", cardOpen);
+    const info = a.info();
+    status2.setText(player.playing ? "\u6B63\u5728\u64AD\u653E" : target ? "\u5DF2\u66AB\u505C" : "\u672A\u64AD\u653E");
+    status2.toggleClass("is-playing", player.playing);
+    if (info.elsewhere) status2.appendText("\uFF08\u53E6\u4E00\u7BC7\uFF09");
+    title.setText(info.title);
+    title.toggleClass("is-link", info.elsewhere);
+    const n = target ? player.paragraphs.length : a.count();
+    const cur = target ? Math.max(player.currentIndex + 1, 0) : 0;
+    meta.setText(`\u6BB5\u843D ${cur} / ${n} \xB7 ${player.speed}x`);
+    snippet.setText(info.snippet);
+    snippet.toggleClass("rf-hidden", info.snippet === "");
+    fav.toggleClass("is-active", a.isFavorite());
+    prevNote.toggleClass("rf-disabled", !a.hasPrev());
+    nextNote.toggleClass("rf-disabled", !a.hasNext());
+    prevPara.toggleClass("rf-disabled", n === 0);
+    nextPara.toggleClass("rf-disabled", n === 0);
+    here.toggleClass("rf-hidden", !info.elsewhere);
+    jump.toggleClass("rf-hidden", !info.elsewhere);
+    back.toggleClass("rf-hidden", !(mine && showResume(player.followState)));
+    if (!drag) place();
+  };
+  update();
+  return { el, update };
+}
 
 // src/ui/reading/installReading.ts
 var FAV_EVENT = "reading-feed:favorites-changed";
@@ -25093,6 +25223,13 @@ function createPlayer(plugin, http, getSettings) {
   plugin.register(() => player.destroy());
   return player;
 }
+function nowPlaying(app, player) {
+  var _a;
+  const f = player.notePath === null ? null : app.vault.getAbstractFileByPath(player.notePath);
+  if (!(f instanceof import_obsidian5.TFile)) return null;
+  const k = readRfKey((_a = app.metadataCache.getFileCache(f)) == null ? void 0 : _a.frontmatter);
+  return k ? { key: loadedKey(k.source, k.id), playing: player.playing } : null;
+}
 function installReading(plugin, player, getSettings, saveSettings) {
   const app = plugin.app;
   const cache = /* @__PURE__ */ new Map();
@@ -25104,7 +25241,8 @@ function installReading(plugin, player, getSettings, saveSettings) {
     const hit = cache.get(file.path);
     if (hit && hit.mtime === file.stat.mtime && hit.audioUrl === audioUrl) return hit;
     const text = await app.vault.cachedRead(file);
-    const info = { mtime: file.stat.mtime, audioUrl, times: parseTimestamps(text) };
+    const times = parseTimestamps(text);
+    const info = { mtime: file.stat.mtime, audioUrl, times, texts: timestampTexts(text, times) };
     cache.set(file.path, info);
     return info;
   }
@@ -25123,7 +25261,7 @@ function installReading(plugin, player, getSettings, saveSettings) {
       const root = view2.containerEl;
       root.querySelectorAll(".rf-active").forEach((n) => n.removeClass("rf-active"));
       if (!active) continue;
-      const target = root.querySelector(`[data-rf-line="${active.line}"]`);
+      const target = root.querySelector(`[data-rf-idx="${player.currentIndex}"]`);
       target == null ? void 0 : target.addClass("rf-active");
       if (!scroll || !player.followActive) continue;
       if (target == null ? void 0 : target.isConnected) {
@@ -25170,7 +25308,7 @@ function installReading(plugin, player, getSettings, saveSettings) {
     return out;
   }
   function goNote(view2, dir) {
-    const file = view2.file;
+    const file = targetFile(view2);
     if (!file) return;
     const n = neighborNote(siblings(file), file.path, dir);
     const target = n && app.vault.getAbstractFileByPath(n.path);
@@ -25183,10 +25321,38 @@ function installReading(plugin, player, getSettings, saveSettings) {
     const k = readRfKey((_a = rfFm(file)) != null ? _a : void 0);
     return k ? loadedKey(k.source, k.id) : null;
   }
+  function fileAt(path) {
+    const f = path === null ? null : app.vault.getAbstractFileByPath(path);
+    return f instanceof import_obsidian5.TFile ? f : null;
+  }
+  function targetFile(view2) {
+    var _a;
+    return (_a = fileAt(player.notePath)) != null ? _a : view2.file;
+  }
+  function noteTitle(file) {
+    var _a, _b;
+    const t = (_a = rfFm(file)) == null ? void 0 : _a["title"];
+    return typeof t === "string" && t !== "" ? t : (_b = file == null ? void 0 : file.basename) != null ? _b : "";
+  }
+  function jumpToPlaying(view2) {
+    const file = fileAt(player.notePath);
+    if (!file) return;
+    const open = previewViews(file.path)[0];
+    if (open) {
+      app.workspace.setActiveLeaf(open.leaf, { focus: true });
+      player.resumeFollow();
+      syncView(true);
+      return;
+    }
+    void view2.leaf.openFile(file).then(() => {
+      player.resumeFollow();
+      window.setTimeout(() => syncView(true), 300);
+    });
+  }
   function makeActions(view2) {
-    const path = () => {
-      var _a, _b;
-      return (_b = (_a = view2.file) == null ? void 0 : _a.path) != null ? _b : "";
+    const neighbor = (dir) => {
+      const f = targetFile(view2);
+      return f ? neighborNote(siblings(f), f.path, dir) : null;
     };
     return {
       prevNote: () => goNote(view2, -1),
@@ -25194,17 +25360,20 @@ function installReading(plugin, player, getSettings, saveSettings) {
       prevPara: () => paraStep(view2, -1),
       nextPara: () => paraStep(view2, 1),
       toggle: () => {
-        if (!view2.file) return;
-        if (player.notePath !== path()) startNote(view2.file);
-        else player.toggle();
+        if (player.notePath !== null) player.toggle();
+        else if (view2.file) startNote(view2.file);
       },
+      playHere: () => {
+        if (view2.file) startNote(view2.file);
+      },
+      jump: () => jumpToPlaying(view2),
       resume: () => {
         player.resumeFollow();
         syncView(true);
       },
       stop: () => player.stop(),
       toggleFavorite: () => {
-        const key = favKey(view2.file);
+        const key = favKey(targetFile(view2));
         if (!key) return;
         const s = getSettings();
         s.favorites = toggleFavorite(s.favorites, key);
@@ -25212,20 +25381,32 @@ function installReading(plugin, player, getSettings, saveSettings) {
         app.workspace.trigger(FAV_EVENT);
       },
       isFavorite: () => {
-        const key = favKey(view2.file);
+        const key = favKey(targetFile(view2));
         return key !== null && getSettings().favorites.includes(key);
       },
-      hasPrev: () => !!view2.file && neighborNote(siblings(view2.file), view2.file.path, -1) !== null,
-      hasNext: () => !!view2.file && neighborNote(siblings(view2.file), view2.file.path, 1) !== null,
+      hasPrev: () => neighbor(-1) !== null,
+      hasNext: () => neighbor(1) !== null,
       count: () => {
-        var _a, _b;
-        return (_b = (_a = cache.get(path())) == null ? void 0 : _a.times.length) != null ? _b : 0;
+        var _a, _b, _c, _d;
+        return (_d = (_c = cache.get((_b = (_a = targetFile(view2)) == null ? void 0 : _a.path) != null ? _b : "")) == null ? void 0 : _c.times.length) != null ? _d : 0;
+      },
+      info: () => {
+        var _a, _b, _c;
+        const f = targetFile(view2);
+        const texts = f ? (_a = cache.get(f.path)) == null ? void 0 : _a.texts : void 0;
+        const snippet = player.notePath !== null ? (_b = texts == null ? void 0 : texts[player.currentIndex]) != null ? _b : "" : "";
+        return { title: noteTitle(f), snippet, elsewhere: player.notePath !== null && player.notePath !== ((_c = view2.file) == null ? void 0 : _c.path) };
+      },
+      getPos: () => getSettings().dockPos[import_obsidian5.Platform.isMobile ? "mobile" : "desktop"],
+      setPos: (p) => {
+        getSettings().dockPos[import_obsidian5.Platform.isMobile ? "mobile" : "desktop"] = p;
+        void (saveSettings == null ? void 0 : saveSettings());
+        bars.forEach((b) => b.bar.update());
       }
     };
   }
   function paraStep(view2, dir) {
-    if (!view2.file) return;
-    if (player.notePath !== view2.file.path && loadSync(view2.file) === null) return;
+    if (player.notePath === null && (!view2.file || loadSync(view2.file) === null)) return;
     player.step(dir);
   }
   function refreshBars() {
@@ -25281,10 +25462,9 @@ function installReading(plugin, player, getSettings, saveSettings) {
       });
     }
   }
-  function addPlayButton(target, path, info, line) {
-    target.dataset.rfLine = String(line);
-    const cur = player.paragraphs[player.currentIndex];
-    if (player.notePath === path && (cur == null ? void 0 : cur.line) === line) target.addClass("rf-active");
+  function addPlayButton(target, path, info, idx) {
+    target.dataset.rfIdx = String(idx);
+    if (player.notePath === path && player.currentIndex === idx) target.addClass("rf-active");
     if (target.querySelector(":scope > .rf-play")) return;
     const btn = createEl("button", { cls: "rf-play", text: "\u25B6", attr: { "aria-label": "\u5F9E\u9019\u6BB5\u958B\u59CB\u64AD\u653E" } });
     btn.addEventListener("click", (e) => {
@@ -25292,8 +25472,7 @@ function installReading(plugin, player, getSettings, saveSettings) {
       e.preventDefault();
       e.stopPropagation();
       const fresh = (_a = cache.get(path)) != null ? _a : info;
-      const idx = fresh.times.findIndex((t) => t.line === line);
-      if (idx < 0) return;
+      if (idx >= fresh.times.length) return;
       player.load(path, fresh.audioUrl, fresh.times);
       player.playFrom(idx);
     });
@@ -25307,15 +25486,14 @@ function installReading(plugin, player, getSettings, saveSettings) {
     const info = await getInfo(file, ctx.frontmatter);
     const sec = ctx.getSectionInfo(el);
     if (!info || !sec) return;
-    const lines = sec.text.split(/\r?\n/);
     const hits = [];
-    for (let i = sec.lineStart; i <= sec.lineEnd && i < lines.length; i++) {
-      if (parseLineTimestamp(lines[i]) !== null) hits.push(i);
-    }
+    info.times.forEach((t, k) => {
+      if (t.line >= sec.lineStart && t.line <= sec.lineEnd) hits.push(k);
+    });
     if (hits.length === 0) return;
     const items = Array.from(el.querySelectorAll(":scope > p, :scope li"));
     if (hits.length > 1 && items.length === hits.length) {
-      hits.forEach((line, i) => addPlayButton(items[i], file.path, info, line));
+      hits.forEach((idx, i) => addPlayButton(items[i], file.path, info, idx));
     } else {
       addPlayButton((_a = items[0]) != null ? _a : el, file.path, info, hits[0]);
     }
@@ -25334,8 +25512,13 @@ function installReading(plugin, player, getSettings, saveSettings) {
   );
   plugin.registerEvent(
     app.metadataCache.on("changed", (f) => {
-      var _a;
+      var _a, _b;
       if (f.path === ((_a = app.workspace.getActiveFile()) == null ? void 0 : _a.path)) tryAutoPreview(f);
+      if (f.path === player.notePath) {
+        void getInfo(f, (_b = app.metadataCache.getFileCache(f)) == null ? void 0 : _b.frontmatter).then((info) => {
+          if (info && player.notePath === f.path) player.load(f.path, info.audioUrl, info.times);
+        });
+      }
       refreshBars();
     })
   );
@@ -25388,7 +25571,13 @@ var ReadingFeedPlugin = class extends import_obsidian6.Plugin {
     const http = new ObsidianHttp();
     const player = createPlayer(this, http, () => this.settings);
     installReading(this, player, () => this.settings, () => this.saveSettings());
-    installBrowser(this, new TedClient(http), () => this.settings, () => this.saveSettings());
+    installBrowser(this, new TedClient(http), () => this.settings, () => this.saveSettings(), {
+      nowPlaying: () => nowPlaying(this.app, player),
+      onPlayerChange: (cb) => {
+        const offs = [player.on("state", cb), player.on("index", cb)];
+        return () => offs.forEach((off) => off());
+      }
+    });
     this.addSettingTab(new ReadingFeedSettingTab(this.app, this));
   }
   async loadSettings() {
@@ -25396,6 +25585,7 @@ var ReadingFeedPlugin = class extends import_obsidian6.Plugin {
     this.settings = { ...DEFAULT_SETTINGS, ...saved };
     this.settings.favorites = [...this.settings.favorites];
     this.settings.noTranscript = [...this.settings.noTranscript];
+    this.settings.dockPos = { ...DEFAULT_SETTINGS.dockPos, ...this.settings.dockPos };
   }
   async saveSettings() {
     await this.saveData(this.settings);

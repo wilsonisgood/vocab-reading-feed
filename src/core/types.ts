@@ -69,8 +69,16 @@ export interface ReadingFeedSettings {
   autoReadingMode: boolean;
   /** Bookmarked talks, as loadedKey `<rf-source>:<rf-id>` (METHOD §3.4). */
   favorites: string[];
-  /** Slugs found to have no English transcript at load time; greyed out in the list (METHOD §2.5). */
+  /** Slugs found to have no English transcript at load time; not listed, like the bundled list (METHOD §2.5). */
   noTranscript: string[];
+  /** Where the floating player bubble was dragged to, per device class; null = default corner (METHOD §3.1). */
+  dockPos: { desktop: DockPos | null; mobile: DockPos | null };
+}
+
+/** Bubble centre as fractions (0–1) of the reading view's width / height. */
+export interface DockPos {
+  x: number;
+  y: number;
 }
 
 export const DEFAULT_SETTINGS: ReadingFeedSettings = {
@@ -81,6 +89,7 @@ export const DEFAULT_SETTINGS: ReadingFeedSettings = {
   autoReadingMode: true,
   favorites: [],
   noTranscript: [],
+  dockPos: { desktop: null, mobile: null },
 };
 
 /** Frontmatter key set (YYYY-MM-DD) the first time any audio in the note plays (METHOD §1, §3.4). */

@@ -14,8 +14,11 @@
 .rf-row-tags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 2px; }
 .rf-tag { font-size: var(--font-ui-smaller); padding: 0 6px; border-radius: 8px; background: var(--background-modifier-hover); color: var(--text-muted); }
 .rf-tag-loaded { background: var(--interactive-accent); color: var(--text-on-accent); }
-.rf-row-unavailable { opacity: 0.4; }
-.rf-tag-warn { background: var(--background-modifier-error); color: var(--text-on-accent); }
+.rf-row-now { display: none; margin-right: 4px; vertical-align: -2px; color: var(--text-muted); }
+.rf-row-now svg { width: 14px; height: 14px; }
+.rf-row-playing { background: var(--background-modifier-hover); border-radius: 4px; opacity: 1; }
+.rf-row-playing .rf-row-now { display: inline-flex; }
+.rf-row-playing.is-playing .rf-row-now { color: #4ea1ff; }
 .rf-bookmark { flex: 0 0 auto; cursor: pointer; color: var(--text-faint); display: flex; padding: 2px; }
 .rf-bookmark:hover { color: var(--text-normal); }
 .rf-bookmark.is-active { color: var(--interactive-accent); }

@@ -6,7 +6,7 @@ import { NoTranscriptError } from "../../core/ted/talkPage";
 import { NO_TRANSCRIPT } from "../../core/ted/noTranscript";
 import { RF_READ_KEY, type ReadingFeedSettings, type StatusFilter, type TalkSummary } from "../../core/types";
 import {
-  collectTopics, EMPTY_FILTER, filterTalks, formatDuration, isUnavailable, loadedKey, tedKey, uniquePath,
+  collectTopics, EMPTY_FILTER, filterTalks, formatDuration, loadedKey, tedKey, uniquePath,
   type BrowserFilter, type LengthFilter, type StatusContext,
 } from "../../core/browser/logic";
 import type { TedClient } from "../../services/ted/TedClient";
@@ -23,6 +23,10 @@ export interface BrowserDeps {
   getSettings: () => ReadingFeedSettings;
   /** Persist the (mutated) settings object. */
   saveSettings?: () => Promise<void>;
+  /** loadedKey of the note in the player, or null (METHOD §3.1: the list marks it). */
+  nowPlaying?: () => { key: string; playing: boolean } | null;
+  /** Subscribe to player changes; returns the unsubscribe. */
+  onPlayerChange?: (cb: () => void) => () => void;
 }
 
 export const FAVORITES_CHANGED = "reading-feed:favorites-changed";
@@ -69,6 +73,8 @@ export class BrowserView extends ItemView {
   private moreBtn!: HTMLButtonElement;
   private loadBtn!: HTMLButtonElement;
   private resultEl!: HTMLElement;
+  private rowEls = new Map<string, HTMLElement>();
+  private offPlayer: (() => void) | null = null;
 
   constructor(leaf: WorkspaceLeaf, private readonly deps: BrowserDeps) {
     super(leaf);
@@ -140,6 +146,7 @@ export class BrowserView extends ItemView {
       }),
     );
     this.registerEvent(this.app.workspace.on(FAVORITES_CHANGED as "quit", () => this.renderList()));
+    this.offPlayer = this.deps.onPlayerChange?.(() => this.markPlaying()) ?? null;
 
     this.renderAll();
     if (!this.started) {
@@ -153,6 +160,8 @@ export class BrowserView extends ItemView {
     this.listEl?.removeEventListener("scroll", this.onScroll);
     this.contentEl.removeEventListener("scroll", this.onScroll);
     if (this.scanTimer !== null) window.clearTimeout(this.scanTimer);
+    this.offPlayer?.();
+    this.offPlayer = null;
   }
 
   // ---- data ----
@@ -178,7 +187,9 @@ export class BrowserView extends ItemView {
   }
 
   private visible(): TalkSummary[] {
-    return filterTalks(this.items, this.filter, this.statusContext(), NO_TRANSCRIPT);
+    // Bundled + runtime-found no-transcript talks are not listed at all (METHOD §2.5).
+    const hidden = new Set([...NO_TRANSCRIPT, ...this.deps.getSettings().noTranscript]);
+    return filterTalks(this.items, this.filter, this.statusContext(), hidden);
   }
 
   private readonly onScroll = (): void => this.checkBottom();
@@ -318,20 +329,20 @@ export class BrowserView extends ItemView {
   private renderList(): void {
     const prevTop = this.listEl.scrollTop;
     this.listEl.empty();
+    this.rowEls.clear();
     for (const item of this.visible()) this.renderRow(item);
+    this.markPlaying();
     this.listEl.scrollTop = prevTop;
     this.renderFooter();
   }
 
   private renderRow(item: TalkSummary): void {
     const isLoaded = this.loaded.has(tedKey(item.slug));
-    const unavailable = !isLoaded && isUnavailable(item.slug, this.deps.getSettings().noTranscript);
-    const row = this.listEl.createDiv({
-      cls: "rf-row" + (isLoaded ? " rf-row-loaded" : "") + (unavailable ? " rf-row-unavailable" : ""),
-    });
+    const row = this.listEl.createDiv({ cls: "rf-row" + (isLoaded ? " rf-row-loaded" : "") });
+    this.rowEls.set(tedKey(item.slug), row);
     const cb = row.createEl("input", { type: "checkbox", cls: "rf-row-check" });
     cb.checked = isLoaded || this.selected.has(item.slug);
-    cb.disabled = isLoaded || unavailable || this.busy;
+    cb.disabled = isLoaded || this.busy;
     cb.onchange = () => {
       if (cb.checked) this.selected.add(item.slug);
       else this.selected.delete(item.slug);
@@ -343,11 +354,12 @@ export class BrowserView extends ItemView {
       row.createDiv("rf-row-thumb rf-row-thumb-empty");
     }
     const body = row.createDiv("rf-row-body");
-    body.createDiv({ cls: "rf-row-title", text: item.title });
+    const title = body.createDiv({ cls: "rf-row-title" });
+    setIcon(title.createSpan({ cls: "rf-row-now", attr: { "aria-label": "播放中" } }), "volume-2");
+    title.appendText(item.title);
     body.createDiv({ cls: "rf-row-meta", text: `${item.speaker} · ${item.published} · ${formatDuration(item.duration)}` });
     const tags = body.createDiv("rf-row-tags");
     if (isLoaded) tags.createSpan({ cls: "rf-tag rf-tag-loaded", text: "已載入" });
-    if (unavailable) tags.createSpan({ cls: "rf-tag rf-tag-warn", text: "沒有英文逐字稿" });
     for (const t of item.topics) tags.createSpan({ cls: "rf-tag", text: t });
 
     const fav = this.deps.getSettings().favorites.includes(tedKey(item.slug));
@@ -357,6 +369,15 @@ export class BrowserView extends ItemView {
     });
     setIcon(bm, "bookmark");
     bm.onclick = () => void this.toggleFavorite(item.slug);
+  }
+
+  /** Highlight the talk in the player; cheap enough to run on every player event. */
+  private markPlaying(): void {
+    const now = this.deps.nowPlaying?.() ?? null;
+    for (const [key, row] of this.rowEls) {
+      row.toggleClass("rf-row-playing", now?.key === key);
+      row.toggleClass("is-playing", now?.key === key && now.playing);
+    }
   }
 
   private renderStatus(): void {

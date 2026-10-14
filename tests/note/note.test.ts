@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { noteFileName, notePath, renderNote } from "../../src/core/note/render";
-import { parseLineTimestamp, parseTimestamps, readRfKey } from "../../src/core/note/parse";
+import { parseLineTimestamp, parseTimestamps, readRfKey, timestampTexts } from "../../src/core/note/parse";
 import { yamlList, yamlString } from "../../src/core/note/yaml";
 import type { Talk } from "../../src/core/types";
 
@@ -125,5 +125,21 @@ describe("parseLineTimestamp / readRfKey", () => {
     expect(readRfKey({ "rf-source": "ted", "rf-id": "" })).toBeNull();
     expect(readRfKey({ "rf-source": "ted", "rf-id": 3 })).toBeNull();
     expect(readRfKey(undefined)).toBeNull();
+  });
+});
+
+describe("timestamp ordinal survives frontmatter reflow", () => {
+  const body = "Hello there. %%rf:1.5%%\n\nSecond one. %%rf:9%%\n";
+  const before = "---\nrf-source: ted\ntopics: [a, b]\n---\n\n" + body;
+  const after = "---\nrf-source: ted\ntopics:\n  - a\n  - b\nrf-read: 2026-10-14\n---\n\n" + body;
+  it("lines shift but ordinals do not", () => {
+    const l0 = parseTimestamps(before)[1].line;
+    const l1 = parseTimestamps(after)[1].line;
+    expect(l1).not.toBe(l0);
+    expect(parseTimestamps(before).findIndex((t) => t.line === l0)).toBe(1);
+    expect(parseTimestamps(after).findIndex((t) => t.line === l1)).toBe(1);
+  });
+  it("texts strip the marker", () => {
+    expect(timestampTexts(after, parseTimestamps(after))).toEqual(["Hello there.", "Second one."]);
   });
 });

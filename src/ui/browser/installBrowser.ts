@@ -2,15 +2,16 @@
 import type { Plugin, WorkspaceLeaf } from "obsidian";
 import type { ReadingFeedSettings } from "../../core/types";
 import type { TedClient } from "../../services/ted/TedClient";
-import { BROWSER_VIEW_TYPE, BrowserView } from "./BrowserView";
+import { BROWSER_VIEW_TYPE, BrowserView, type BrowserDeps } from "./BrowserView";
 
 export function installBrowser(
   plugin: Plugin,
   client: TedClient,
   getSettings: () => ReadingFeedSettings,
   saveSettings: () => Promise<void> = () => Promise.resolve(),
+  player: Pick<BrowserDeps, "nowPlaying" | "onPlayerChange"> = {},
 ): void {
-  plugin.registerView(BROWSER_VIEW_TYPE, (leaf) => new BrowserView(leaf, { client, getSettings, saveSettings }));
+  plugin.registerView(BROWSER_VIEW_TYPE, (leaf) => new BrowserView(leaf, { client, getSettings, saveSettings, ...player }));
 
   const open = async () => {
     const { workspace } = plugin.app;

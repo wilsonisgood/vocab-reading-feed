@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { neighborNote, sortNotes, todayString, toggleFavorite } from "../../src/ui/reading/logic";
+import { cardSide, clampDock, neighborNote, sortNotes, todayString, toggleFavorite } from "../../src/ui/reading/logic";
 
 const n = (name: string, published: unknown) => ({ path: `d/${name}`, name, published });
 
@@ -26,5 +26,19 @@ describe("todayString / toggleFavorite", () => {
   it("toggles", () => {
     expect(toggleFavorite(["a"], "b")).toEqual(["a", "b"]);
     expect(toggleFavorite(["a", "b"], "a")).toEqual(["b"]);
+  });
+});
+
+describe("dock position", () => {
+  it("clamps the bubble fully inside", () => {
+    expect(clampDock(-50, 9999, 420, 220, 20)).toEqual({ x: 0, y: 1 });
+    expect(clampDock(210, 110, 420, 220, 20)).toEqual({ x: 0.5, y: 0.5 });
+  });
+  it("tiny view centres", () => {
+    expect(clampDock(5, 5, 30, 30, 20)).toEqual({ x: 0.5, y: 0.5 });
+  });
+  it("card opens toward the roomier side", () => {
+    expect(cardSide({ x: 0.9, y: 0.1 })).toEqual({ left: true, up: false });
+    expect(cardSide({ x: 0.1, y: 0.9 })).toEqual({ left: false, up: true });
   });
 });

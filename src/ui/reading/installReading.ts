@@ -1,8 +1,8 @@
 // Reading-mode glue (METHOD §3): ▶ per paragraph, playback bar, follow-scroll.
-import { MarkdownView, TFile, type EventRef, type Plugin, type MarkdownPostProcessorContext } from "obsidian";
+import { MarkdownView, Platform, TFile, type App, type EventRef, type Plugin, type MarkdownPostProcessorContext } from "obsidian";
 import type { HttpPort } from "../../core/ports";
 import { RF_READ_KEY, type ParagraphTime, type ReadingFeedSettings } from "../../core/types";
-import { parseLineTimestamp, parseTimestamps, readRfKey } from "../../core/note/parse";
+import { parseTimestamps, readRfKey, timestampTexts } from "../../core/note/parse";
 import { PlayerService } from "../../services/player/PlayerService";
 import { attachHls } from "../../services/player/hlsAttach";
 import { loadedKey } from "../../core/browser/logic";
@@ -15,6 +15,8 @@ interface NoteInfo {
   mtime: number;
   audioUrl: string;
   times: ParagraphTime[];
+  /** Paragraph text per timestamp (card's "now reading" line). */
+  texts: string[];
 }
 
 export function createPlayer(plugin: Plugin, http: HttpPort, getSettings: () => ReadingFeedSettings): PlayerService {
@@ -26,6 +28,14 @@ export function createPlayer(plugin: Plugin, http: HttpPort, getSettings: () => 
   });
   plugin.register(() => player.destroy());
   return player;
+}
+
+/** loadedKey of the note in the player (for the browser list), or null. */
+export function nowPlaying(app: App, player: PlayerService): { key: string; playing: boolean } | null {
+  const f = player.notePath === null ? null : app.vault.getAbstractFileByPath(player.notePath);
+  if (!(f instanceof TFile)) return null;
+  const k = readRfKey(app.metadataCache.getFileCache(f)?.frontmatter as Record<string, unknown> | undefined);
+  return k ? { key: loadedKey(k.source, k.id), playing: player.playing } : null;
 }
 
 export function installReading(
@@ -46,7 +56,8 @@ export function installReading(
     const hit = cache.get(file.path);
     if (hit && hit.mtime === file.stat.mtime && hit.audioUrl === audioUrl) return hit;
     const text = await app.vault.cachedRead(file);
-    const info = { mtime: file.stat.mtime, audioUrl, times: parseTimestamps(text) };
+    const times = parseTimestamps(text);
+    const info = { mtime: file.stat.mtime, audioUrl, times, texts: timestampTexts(text, times) };
     cache.set(file.path, info);
     return info;
   }
@@ -68,7 +79,7 @@ export function installReading(
       const root = view.containerEl;
       root.querySelectorAll(".rf-active").forEach((n) => n.removeClass("rf-active"));
       if (!active) continue;
-      const target = root.querySelector<HTMLElement>(`[data-rf-line="${active.line}"]`);
+      const target = root.querySelector<HTMLElement>(`[data-rf-idx="${player.currentIndex}"]`);
       target?.addClass("rf-active");
       if (!scroll || !player.followActive) continue;
       if (target?.isConnected) {
@@ -120,7 +131,7 @@ export function installReading(
   }
 
   function goNote(view: MarkdownView, dir: -1 | 1): void {
-    const file = view.file;
+    const file = targetFile(view);
     if (!file) return;
     const n = neighborNote(siblings(file), file.path, dir);
     const target = n && app.vault.getAbstractFileByPath(n.path);
@@ -134,25 +145,63 @@ export function installReading(
     return k ? loadedKey(k.source, k.id) : null;
   }
 
+  function fileAt(path: string | null): TFile | null {
+    const f = path === null ? null : app.vault.getAbstractFileByPath(path);
+    return f instanceof TFile ? f : null;
+  }
+
+  /** The dock acts on the playing note when there is one, else on the view's own note. */
+  function targetFile(view: MarkdownView): TFile | null {
+    return fileAt(player.notePath) ?? view.file;
+  }
+
+  function noteTitle(file: TFile | null): string {
+    const t = rfFm(file)?.["title"];
+    return typeof t === "string" && t !== "" ? t : file?.basename ?? "";
+  }
+
+  /** Open the playing note (reuse a tab that already shows it), then scroll to the current paragraph. */
+  function jumpToPlaying(view: MarkdownView): void {
+    const file = fileAt(player.notePath);
+    if (!file) return;
+    const open = previewViews(file.path)[0];
+    if (open) {
+      app.workspace.setActiveLeaf(open.leaf, { focus: true });
+      player.resumeFollow();
+      syncView(true);
+      return;
+    }
+    void view.leaf.openFile(file).then(() => {
+      player.resumeFollow();
+      window.setTimeout(() => syncView(true), 300);
+    });
+  }
+
   function makeActions(view: MarkdownView): BarActions {
-    const path = () => view.file?.path ?? "";
+    const neighbor = (dir: -1 | 1) => {
+      const f = targetFile(view);
+      return f ? neighborNote(siblings(f), f.path, dir) : null;
+    };
     return {
       prevNote: () => goNote(view, -1),
       nextNote: () => goNote(view, 1),
       prevPara: () => paraStep(view, -1),
       nextPara: () => paraStep(view, 1),
       toggle: () => {
-        if (!view.file) return;
-        if (player.notePath !== path()) startNote(view.file);
-        else player.toggle();
+        if (player.notePath !== null) player.toggle();
+        else if (view.file) startNote(view.file);
       },
+      playHere: () => {
+        if (view.file) startNote(view.file);
+      },
+      jump: () => jumpToPlaying(view),
       resume: () => {
         player.resumeFollow();
         syncView(true);
       },
       stop: () => player.stop(),
       toggleFavorite: () => {
-        const key = favKey(view.file);
+        const key = favKey(targetFile(view));
         if (!key) return;
         const s = getSettings();
         s.favorites = toggleFavorite(s.favorites, key);
@@ -160,22 +209,33 @@ export function installReading(
         app.workspace.trigger(FAV_EVENT);
       },
       isFavorite: () => {
-        const key = favKey(view.file);
+        const key = favKey(targetFile(view));
         return key !== null && getSettings().favorites.includes(key);
       },
-      hasPrev: () => !!view.file && neighborNote(siblings(view.file), view.file.path, -1) !== null,
-      hasNext: () => !!view.file && neighborNote(siblings(view.file), view.file.path, 1) !== null,
-      count: () => cache.get(path())?.times.length ?? 0,
+      hasPrev: () => neighbor(-1) !== null,
+      hasNext: () => neighbor(1) !== null,
+      count: () => cache.get(targetFile(view)?.path ?? "")?.times.length ?? 0,
+      info: () => {
+        const f = targetFile(view);
+        const texts = f ? cache.get(f.path)?.texts : undefined;
+        const snippet = player.notePath !== null ? (texts?.[player.currentIndex] ?? "") : "";
+        return { title: noteTitle(f), snippet, elsewhere: player.notePath !== null && player.notePath !== view.file?.path };
+      },
+      getPos: () => getSettings().dockPos[Platform.isMobile ? "mobile" : "desktop"],
+      setPos: (p) => {
+        getSettings().dockPos[Platform.isMobile ? "mobile" : "desktop"] = p;
+        void saveSettings?.();
+        bars.forEach((b) => b.bar.update());
+      },
     };
   }
 
   function paraStep(view: MarkdownView, dir: -1 | 1): void {
-    if (!view.file) return;
-    if (player.notePath !== view.file.path && loadSync(view.file) === null) return;
+    if (player.notePath === null && (!view.file || loadSync(view.file) === null)) return;
     player.step(dir);
   }
 
-  /** Floating bar on every rf note in reading mode; `rf-note` class hides the properties block. */
+  /** Floating dock on every rf note in reading mode; `rf-note` class hides the properties block. */
   function refreshBars(): void {
     const seen = new Set<MarkdownView>();
     for (const leaf of app.workspace.getLeavesOfType("markdown")) {
@@ -231,10 +291,9 @@ export function installReading(
     }
   }
 
-  function addPlayButton(target: HTMLElement, path: string, info: NoteInfo, line: number): void {
-    target.dataset.rfLine = String(line);
-    const cur = player.paragraphs[player.currentIndex];
-    if (player.notePath === path && cur?.line === line) target.addClass("rf-active");
+  function addPlayButton(target: HTMLElement, path: string, info: NoteInfo, idx: number): void {
+    target.dataset.rfIdx = String(idx);
+    if (player.notePath === path && player.currentIndex === idx) target.addClass("rf-active");
     if (target.querySelector(":scope > .rf-play")) return;
     const btn = createEl("button", { cls: "rf-play", text: "▶", attr: { "aria-label": "從這段開始播放" } });
     btn.addEventListener("click", (e) => {
@@ -242,8 +301,7 @@ export function installReading(
       e.stopPropagation();
       // Everything below is synchronous: iOS only starts audio inside the tap (METHOD §3.2).
       const fresh = cache.get(path) ?? info;
-      const idx = fresh.times.findIndex((t) => t.line === line);
-      if (idx < 0) return;
+      if (idx >= fresh.times.length) return;
       player.load(path, fresh.audioUrl, fresh.times);
       player.playFrom(idx);
     });
@@ -257,15 +315,16 @@ export function installReading(
     const info = await getInfo(file, ctx.frontmatter);
     const sec = ctx.getSectionInfo(el);
     if (!info || !sec) return;
-    const lines = sec.text.split(/\r?\n/);
+    // Key by ordinal, not line: frontmatter writes (rf-read) shift the lines of rendered sections.
+    // Lines come from our own table (fresh per mtime): `sec.text` can still be "" at this point.
     const hits: number[] = [];
-    for (let i = sec.lineStart; i <= sec.lineEnd && i < lines.length; i++) {
-      if (parseLineTimestamp(lines[i]) !== null) hits.push(i);
-    }
+    info.times.forEach((t, k) => {
+      if (t.line >= sec.lineStart && t.line <= sec.lineEnd) hits.push(k);
+    });
     if (hits.length === 0) return;
     const items = Array.from(el.querySelectorAll<HTMLElement>(":scope > p, :scope li"));
     if (hits.length > 1 && items.length === hits.length) {
-      hits.forEach((line, i) => addPlayButton(items[i], file.path, info, line));
+      hits.forEach((idx, i) => addPlayButton(items[i], file.path, info, idx));
     } else {
       addPlayButton(items[0] ?? el, file.path, info, hits[0]);
     }
@@ -287,6 +346,12 @@ export function installReading(
     app.metadataCache.on("changed", (f) => {
       // Frontmatter of a freshly created note arrives after file-open.
       if (f.path === app.workspace.getActiveFile()?.path) tryAutoPreview(f);
+      // rf-read reflows the frontmatter: re-read the playing note's lines for applyScroll.
+      if (f.path === player.notePath) {
+        void getInfo(f, app.metadataCache.getFileCache(f)?.frontmatter).then((info) => {
+          if (info && player.notePath === f.path) player.load(f.path, info.audioUrl, info.times);
+        });
+      }
       refreshBars();
     }),
   );

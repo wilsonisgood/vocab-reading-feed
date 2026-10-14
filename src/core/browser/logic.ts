@@ -40,14 +40,9 @@ export function matchesStatus(slug: string, status: StatusFilter, ctx: StatusCon
   }
 }
 
-/** Built-in no-transcript talks are not listed at all (METHOD §2.5). */
+/** No-transcript talks (bundled list + found at load time) are not listed at all (METHOD §2.5). */
 export function isHidden(slug: string, builtin: ReadonlySet<string>): boolean {
   return builtin.has(slug);
-}
-
-/** Runtime-discovered no-transcript talks stay listed but greyed out and unselectable. */
-export function isUnavailable(slug: string, discovered: readonly string[]): boolean {
-  return discovered.includes(slug);
 }
 
 /** Dedupe key for a loaded talk: `<rf-source>:<rf-id>` (METHOD §1). */

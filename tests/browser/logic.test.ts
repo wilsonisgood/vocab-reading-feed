@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  collectTopics, EMPTY_FILTER, isHidden, isUnavailable, matchesStatus, filterTalks, formatDuration, loadedKey, matchesLength, tedKey, uniquePath,
+  collectTopics, EMPTY_FILTER, isHidden, matchesStatus, filterTalks, formatDuration, loadedKey, matchesLength, tedKey, uniquePath,
 } from "../../src/core/browser/logic";
 import type { TalkSummary } from "../../src/core/types";
 
@@ -85,9 +85,9 @@ describe("status filter, hidden, unavailable", () => {
     expect(isHidden("b", new Set(["b"]))).toBe(true);
     expect(isHidden("a", new Set(["b"]))).toBe(false);
   });
-  it("discovered no-transcript are unavailable but still listed", () => {
-    expect(isUnavailable("a", ["a"])).toBe(true);
-    expect(isUnavailable("b", ["a"])).toBe(false);
-    expect(slugs("all")).toContain("a");
+  it("bundled and discovered no-transcript are both dropped", () => {
+    const items = [t("a"), t("b"), t("c")];
+    const hidden = new Set(["a", "c"]);
+    expect(filterTalks(items, EMPTY_FILTER, undefined, hidden).map((t) => t.slug)).toEqual(["b"]);
   });
 });

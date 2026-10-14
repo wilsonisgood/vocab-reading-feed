@@ -11,4 +11,11 @@
   → `tools/survey.py` 用 `/etc/ssl/cert.pem`。
 - 2026-10-14 **BBC 節目列表的 `<a` 跟 `href` 之間是兩個空白**，regex 要寫 `<a\s+href`，不然標題全空。
 - 2026-10-14 **TED 的 videos sitemap 會落後**（最新 2026-09-16；09-30 的 Paul Bloom 那場不在裡面）→ 最近一個月要另外補。
+- 2026-10-14 **`processFrontMatter` 會重排整個 frontmatter**（flow 序列 `[a, b]` 展開成多行）→ 筆記行號整體位移，
+  畫面上已渲染的區塊不會重畫。任何存在 DOM 上的行號都會過期 ⇒ 段落用序號對應（METHOD §3.2）。
+- 2026-10-14 **post-processor 裡 `ctx.getSectionInfo(el).text` 可能是空字串**（稍後才補上），`lineStart` 正確 → 別從 `text` 解析。
+- 2026-10-14 **CSS 隱藏屬性區被 Obsidian 蓋掉**：`.markdown-preview-view.show-properties .metadata-container`
+  權重較高且讀 `--metadata-display-reading` → 改設變數（METHOD §3.1）。
+- 2026-10-14 **實機除錯**：`env -u ELECTRON_RUN_AS_NODE /Applications/Obsidian.app/Contents/MacOS/Obsidian --remote-debugging-port=9333`，
+  再用 CDP（`/json/list` → WebSocket `Runtime.evaluate`、`Input.dispatchMouseEvent`、`Page.captureScreenshot`）操作與截圖。
 - 2026-10-14 **hls.js 自帶的型別需要 TS ≥ 5.7**（Uint8Array 泛型），本 repo 釘 TS 5.3.3 → 用 `src/services/player/hls-light.d.ts` 自寫最小型別；升級 TS 後可刪。
