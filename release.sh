@@ -244,14 +244,39 @@ OWNER_REPO=$(printf '%s' "$REMOTE_URL" | sed -E 's#^git@github\.com:##; s#^https
 
 echo
 echo "等 GitHub Actions 發佈 ${NEW_VERSION}（最多等 5 分鐘）..."
-# 匿名 GitHub API 每小時只有 60 次，所以 15 秒查一次（最多 20 次）；
-# 額度用完就不再查，直接給 Actions 頁的連結。
+# 查 GitHub API 時帶上 git push 用的同一組憑證（git credential helper，例如 macOS
+# 鑰匙圈）：有身分每小時 5000 次，匿名只有 60 次、而且整個 IP 共用。
+# 拿不到就退回匿名。GIT_TERMINAL_PROMPT=0：沒存憑證時不要停下來問帳密。
+# token 經由 stdin 交給 curl（-H @-），不出現在指令列／ps 裡，也不印出來。
+GH_TOKEN=$(printf 'protocol=https\nhost=github.com\n\n' \
+  | GIT_TERMINAL_PROMPT=0 git credential fill 2>/dev/null \
+  | sed -n 's/^password=//p' || true)
+if [ -n "$GH_TOKEN" ]; then
+  echo "用 git 存的 GitHub 憑證查詢。"
+else
+  c_yellow "拿不到 git 存的 GitHub 憑證，改用匿名查詢（每小時 60 次、IP 共用）。"
+fi
+
+github_api() {
+  if [ -n "$GH_TOKEN" ]; then
+    printf 'Authorization: Bearer %s\n' "$GH_TOKEN" | curl -s -H @- "$1"
+  else
+    curl -s "$1"
+  fi
+}
+
+# 15 秒查一次（最多 20 次）；額度用完就不再查，直接給 Actions 頁的連結。
 DEADLINE=$(($(date +%s) + 300))
 FOUND=false
 while [ "$(date +%s)" -lt "$DEADLINE" ]; do
-  RESP=$(curl -s "https://api.github.com/repos/${OWNER_REPO}/releases/tags/${NEW_VERSION}" || true)
+  RESP=$(github_api "https://api.github.com/repos/${OWNER_REPO}/releases/tags/${NEW_VERSION}" || true)
+  if printf '%s' "$RESP" | grep -q '"Bad credentials"'; then
+    c_yellow "git 存的 GitHub 憑證被 API 拒絕（過期或權限不足），改用匿名查詢。"
+    GH_TOKEN=""
+    continue
+  fi
   if printf '%s' "$RESP" | grep -q 'API rate limit exceeded'; then
-    c_yellow "GitHub API 匿名額度用完，停止查詢。"
+    c_yellow "GitHub API 額度用完，停止查詢。"
     break
   fi
   DRAFT=$(printf '%s' "$RESP" | jq -r '.draft // empty' 2>/dev/null || true)
