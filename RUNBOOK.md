@@ -1,12 +1,20 @@
 # RUNBOOK — 照什麼順序做
 
 ## 每次開工
-1. 讀 CLAUDE.md → TODO.md（找第一個 ⬜／🔵）→ 會動到合約就讀 METHOD.md，用新工具前讀 PITFALLS.md。
-2. Python 一律 `python3 -I`；裝套件用 `pip3 install`。HTTPS 憑證用 `/etc/ssl/cert.pem`（見 PITFALLS）。
-3. 對官網要客氣：逐頁抓的速率 ≤ 1 req/s，所有 HTTP 回應都經過 `.cache/` 快取。
+1. 讀 CLAUDE.md → TODO.md（找第一個 ⬜／🔵）→ 動到格式、抓取、同步前讀 METHOD.md；用新工具前讀 PITFALLS.md。
+2. 主 session 讀 AGENT.md（派工規則）。
 
-## 一輪從頭到尾
-1. `python3 -I tools/survey.py`：更新文章清單（`--refresh` 會忽略快取）。
-2. `python3 -I tools/bbc_timings.py --all`：補算還沒處理的集數（P0 之後才有這支）。
-3. 看 `data/timings/failed.json`，不通過的人工看過再決定要不要重跑或放棄。
-4. commit；push 之前先問使用者（必停點 1）。
+## 開發流程（沿用 Vocab Tracker 的規則）
+1. **開分支**：目前只有本機 `main`。每項工作從 `main` 開 `feat/<主題>`；⛔ 不直接在 `main` 上 commit。
+   要平行開發就用 worktree，放 `.claude/worktrees/`，`node_modules` 用 symlink 接主目錄的。
+2. **開發＋測試**：開發中只跑相關測試（`npx vitest run <路徑>`）；完成時 `npm run check`
+  （typecheck → lint → test → build）要全過。
+3. **commit**：連同重新 build 的 `main.js`、`styles.css` 一起 commit；逐檔 `git add`。
+4. **部署到本機 vault**：先 `pgrep -x Obsidian` 確認 Obsidian 已完全關閉，才把
+   `main.js`、`manifest.json`、`styles.css` 複製到 `~/Documents/Obsidian Vault/.obsidian/plugins/reading-feed/`，
+   再用 `diff -q` 確認一致。Obsidian 還開著時，在背景等它關閉再部署，不用問使用者。
+5. **回報**：commit hash 和分支名。⛔ merge、push、發版都由使用者自己做。
+
+## Python 工具（pipeline/）
+- 一律 `python3 -I`；裝套件 `pip3 install`。HTTPS 憑證用 `/etc/ssl/cert.pem`（見 PITFALLS）。
+- 對官網要客氣：逐頁抓的速率 ≤ 1 req/s，HTTP 一律經過 `pipeline/tools/survey.py` 的 `get()` 快取。
