@@ -4,7 +4,7 @@
 
 | 項 | 狀態 | 缺什麼 |
 |---|---|---|
-| 盤點三來源文章數（`tools/survey.py` → `data/survey.json`） | 🔵 | — |
+| 盤點 BBC + TED 文章數（`tools/survey.py` → `data/survey.json`） | ✅ | — |
 | 概念驗證：3 篇範例 下載→轉寫→對齊→時間戳 JSON | ⬜ | 等使用者看完盤點 |
 | 時間戳發布（GitHub + jsDelivr） | ⬜ | — |
 

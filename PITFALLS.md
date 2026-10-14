@@ -7,6 +7,7 @@
   ⇒ 一律用節目頁上的 `downloads.bbc.co.uk/learningenglish/features/6min/*_download.mp3`（兩次下載同大小）。
 - 2026-10-14 **TED 的 HLS 網址帶 `intro_master_id` 會在前面接片頭**（例：12009 加片頭 734.2 s、不加 730.7 s）。
   transcript 的 cue 時間是以哪一版為準還沒驗；處理與插件端要用同一版（建議不帶片頭）。
-- 2026-10-14 **VOA 的 sitemap 不完整**（7975366 那篇不在裡面）→ 盤點改翻分類頁 `/z/<id>?p=N`。
 - 2026-10-14 **python.org 版 Python 沒有 CA 憑證**，urllib 連 https 會 CERTIFICATE_VERIFY_FAILED
   → `tools/survey.py` 用 `/etc/ssl/cert.pem`。
+- 2026-10-14 **BBC 節目列表的 `<a` 跟 `href` 之間是兩個空白**，regex 要寫 `<a\s+href`，不然標題全空。
+- 2026-10-14 **TED 的 videos sitemap 會落後**（最新 2026-09-16；09-30 的 Paul Bloom 那場不在裡面）→ 最近一個月要另外補。

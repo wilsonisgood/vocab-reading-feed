@@ -1,4 +1,4 @@
-# vocab-reading-feed — 幫 Vocab Tracker 插件預先算好英文文章音檔的段落時間戳（VOA／BBC 6 Minute English／TED）
+# vocab-reading-feed — 幫 Vocab Tracker 插件預先算好英文文章音檔的段落時間戳（BBC 6 Minute English／TED）
 
 **狀態**：active <!-- active | paused | closed；closed 時寫「結案總結在 <檔>」 -->
 

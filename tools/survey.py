@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""盤點三個來源有多少文章：標題、日期、分類。
+"""盤點 BBC 6 Minute English 與 TED 有多少篇：標題、日期、分類。
 
 輸出：
-  data/catalog/{voa,bbc,ted}.json  每篇一筆 {id, title, date, categories, url}
+  data/catalog/{bbc,ted}.json  每篇一筆 {id, title, date, categories, url}
   data/survey.json                 各來源總數、每年篇數、分類篇數
 
 只用標準函式庫。HTTP 回應快取在 .cache/（重跑不會再打網站）。
@@ -18,10 +18,10 @@ import re
 import ssl
 import sys
 import time
+import urllib.error
 import urllib.request
 import xml.etree.ElementTree as ET
 from collections import Counter
-from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -30,7 +30,6 @@ CACHE = ROOT / ".cache" / "http"
 OUT = ROOT / "data"
 UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129 Safari/537.36"
 REFRESH = "--refresh" in sys.argv
-WORKERS = 4  # 對官網客氣一點
 # python.org 版 Python 不帶 CA 憑證（沒跑 Install Certificates.command）→ 退回 macOS 系統的
 _SYS_CA = "/etc/ssl/cert.pem"
 SSL_CTX = ssl.create_default_context(cafile=_SYS_CA) if Path(_SYS_CA).exists() else ssl.create_default_context()
@@ -47,6 +46,12 @@ def get(url: str) -> str:
             with urllib.request.urlopen(req, timeout=60, context=SSL_CTX) as r:
                 raw = r.read()
             break
+        except urllib.error.HTTPError as e:
+            if e.code == 404:  # 分類頁翻過頭會回 404，當成空頁
+                return ""
+            if attempt == 2:
+                raise
+            time.sleep(2 * (attempt + 1))
         except Exception:
             if attempt == 2:
                 raise
@@ -62,66 +67,11 @@ def clean(s: str) -> str:
     return re.sub(r"\s+", " ", html.unescape(s)).strip()
 
 
-# ---------- VOA：各分類頁（/z/<id>?p=N）一頁一頁翻到空 ----------
-# sitemap 不完整（例：7975366 那篇不在裡面），所以改翻分類頁。
-
-VOA = "https://learningenglish.voanews.com"
-VOA_ITEM = re.compile(
-    r'<span class="date[^"]*"\s*>([^<]+)</span>\s*<a href="(/a/[^"]*?(\d+)\.html)"[^>]*>\s*<h4[^>]*title="([^"]*)"'
-)
-MAX_PAGES = 600
-
-
-def voa_zones() -> dict[str, str]:
-    zones: dict[str, str] = {}
-    for page in (VOA + "/", VOA + "/a/7975366.html"):
-        for zid, title in re.findall(r'href="/z/(\d+)"\s+title="([^"]+)"', get(page)):
-            zones.setdefault(zid, clean(title))
-    return zones
-
-
-def voa_zone_items(zid: str) -> list[tuple[str, str, str, str]]:
-    seen: set[str] = set()
-    items = []
-    for p in range(MAX_PAGES):
-        found = VOA_ITEM.findall(get(f"{VOA}/z/{zid}?p={p}"))
-        new = [x for x in found if x[2] not in seen]
-        if not new:
-            break
-        for date, href, aid, title in new:
-            seen.add(aid)
-            items.append((aid, clean(title), date.strip(), href))
-    return items
-
-
-def voa_date(s: str) -> str:
-    try:
-        return datetime.strptime(s, "%B %d, %Y").date().isoformat()
-    except ValueError:
-        return s
-
-
-def survey_voa() -> list[dict]:
-    zones = voa_zones()
-    print(f"VOA: {len(zones)} 個分類", file=sys.stderr)
-    with ThreadPoolExecutor(WORKERS) as ex:
-        results = dict(zip(zones, ex.map(voa_zone_items, zones)))
-    by_id: dict[str, dict] = {}
-    for zid, items in results.items():
-        print(f"  {zones[zid]}: {len(items)}", file=sys.stderr)
-        for aid, title, date, href in items:
-            e = by_id.setdefault(aid, {"id": f"voa-{aid}", "title": title, "date": voa_date(date),
-                                       "categories": [], "url": VOA + href})
-            if zones[zid] not in e["categories"]:
-                e["categories"].append(zones[zid])
-    return sorted(by_id.values(), key=lambda e: e["date"], reverse=True)
-
-
 # ---------- BBC 6 Minute English：系列首頁一次列完 ----------
 
 BBC = "https://www.bbc.co.uk/learningenglish/english/features/6-minute-english"
 BBC_ITEM = re.compile(
-    r'<h2>\s*<a href="(/learningenglish/english/features/6-minute-english[_0-9]*/ep-(\d{6}))">([^<]*)</a>\s*</h2>'
+    r'<h2>\s*<a\s+href="(/learningenglish/english/features/6-minute-english[_0-9]*/ep-(\d{6}))">([^<]*)</a>\s*</h2>'
     r'\s*<div class="details">\s*<h3>.*?/\s*([0-9]{1,2} \w{3} \d{4})\s*</h3>\s*(?:<p>([^<]*)</p>)?',
     re.S,
 )
@@ -194,12 +144,11 @@ def summarize(items: list[dict], note: str) -> dict:
 def main() -> None:
     OUT.joinpath("catalog").mkdir(parents=True, exist_ok=True)
     notes = {
-        "voa": "翻 learningenglish 各分類頁到底，依文章 ID 去重；一篇可屬多個分類。未區分有無音檔。",
         "bbc": "只算 6 Minute English 系列首頁列出的集數（2017 起）。",
         "ted": "videos sitemap，約落後官網一個月；分類（topics）不在 sitemap 裡，尚未抓。",
     }
     summary = {"generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"), "sources": {}}
-    for name, fn in (("bbc", survey_bbc), ("ted", survey_ted), ("voa", survey_voa)):
+    for name, fn in (("bbc", survey_bbc), ("ted", survey_ted)):
         items = fn()
         OUT.joinpath("catalog", f"{name}.json").write_text(
             json.dumps(items, ensure_ascii=False, indent=1), encoding="utf-8")

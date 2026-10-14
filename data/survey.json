@@ -1,0 +1,121 @@
+{
+  "generated_at": "2026-10-14T04:47:48+00:00",
+  "sources": {
+    "bbc": {
+      "total": 494,
+      "newest": "2026-10-08",
+      "oldest": "2017-05-04",
+      "by_year": {
+        "2026": 40,
+        "2025": 47,
+        "2024": 52,
+        "2023": 52,
+        "2022": 52,
+        "2021": 60,
+        "2020": 53,
+        "2019": 52,
+        "2018": 52,
+        "2017": 34
+      },
+      "by_category": {
+        "6 Minute English": 494
+      },
+      "latest_5": [
+        {
+          "date": "2026-10-08",
+          "title": "Are people drinking less alcohol?",
+          "url": "https://www.bbc.co.uk/learningenglish/english/features/6-minute-english_2026/ep-261008"
+        },
+        {
+          "date": "2026-10-01",
+          "title": "Why does heartbreak hurt so much?",
+          "url": "https://www.bbc.co.uk/learningenglish/english/features/6-minute-english_2026/ep-261001"
+        },
+        {
+          "date": "2026-09-24",
+          "title": "Why do we itch?",
+          "url": "https://www.bbc.co.uk/learningenglish/english/features/6-minute-english_2026/ep-260924"
+        },
+        {
+          "date": "2026-09-17",
+          "title": "Is rejection good for us?",
+          "url": "https://www.bbc.co.uk/learningenglish/english/features/6-minute-english_2026/ep-260917"
+        },
+        {
+          "date": "2026-09-10",
+          "title": "Can apps teach you a language?",
+          "url": "https://www.bbc.co.uk/learningenglish/english/features/6-minute-english_2026/ep-260910"
+        }
+      ],
+      "note": "只算 6 Minute English 系列首頁列出的集數（2017 起）。"
+    },
+    "ted": {
+      "total": 7642,
+      "newest": "2026-09-16",
+      "oldest": "1972-05-14",
+      "by_year": {
+        "2026": 166,
+        "2025": 409,
+        "2024": 432,
+        "2023": 467,
+        "2022": 435,
+        "2021": 507,
+        "2020": 532,
+        "2019": 579,
+        "2018": 504,
+        "2017": 527,
+        "2016": 426,
+        "2015": 398,
+        "2014": 377,
+        "2013": 392,
+        "2012": 303,
+        "2011": 269,
+        "2010": 266,
+        "2009": 232,
+        "2008": 84,
+        "2007": 113,
+        "2006": 49,
+        "2005": 65,
+        "2004": 33,
+        "2003": 34,
+        "2002": 26,
+        "2001": 5,
+        "1998": 6,
+        "1994": 1,
+        "1991": 1,
+        "1990": 1,
+        "1984": 1,
+        "1983": 1,
+        "1972": 1
+      },
+      "latest_5": [
+        {
+          "date": "2026-09-16",
+          "title": "Tiko: Closing the care gap for Africa's adolescent girls",
+          "url": "https://www.ted.com/talks/the_audacious_project_tiko_closing_the_care_gap_for_africa_s_adolescent_girls"
+        },
+        {
+          "date": "2026-09-15",
+          "title": "How to explain something complicated",
+          "url": "https://www.ted.com/talks/ted_ed_how_to_explain_something_complicated"
+        },
+        {
+          "date": "2026-09-10",
+          "title": "Why do some people have a better sense of direction than others?",
+          "url": "https://www.ted.com/talks/oliver_baumann_why_do_some_people_have_a_better_sense_of_direction_than_others"
+        },
+        {
+          "date": "2026-09-08",
+          "title": "Ever walk into a room and forget what you were doing?",
+          "url": "https://www.ted.com/talks/gabriel_radvansky_ever_walk_into_a_room_and_forget_what_you_were_doing"
+        },
+        {
+          "date": "2026-09-03",
+          "title": "What are tariffs, and how do they work?",
+          "url": "https://www.ted.com/talks/ted_ed_what_are_tariffs_and_how_do_they_work"
+        }
+      ],
+      "note": "videos sitemap，約落後官網一個月；分類（topics）不在 sitemap 裡，尚未抓。"
+    }
+  }
+}
