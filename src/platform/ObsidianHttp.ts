@@ -13,4 +13,9 @@ export class ObsidianHttp implements HttpPort {
     });
     return { status: res.status, text: res.text };
   }
+
+  async requestBinary(url: string) {
+    const res = await requestUrl({ url, throw: false });
+    return { status: res.status, data: res.arrayBuffer };
+  }
 }

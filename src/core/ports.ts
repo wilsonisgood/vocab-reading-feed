@@ -19,4 +19,6 @@ export interface HttpResponse {
  */
 export interface HttpPort {
   request(req: HttpRequest): Promise<HttpResponse>;
+  /** GET as bytes — the hls.js fallback loader's segments (METHOD §3.1). */
+  requestBinary(url: string): Promise<{ status: number; data: ArrayBuffer }>;
 }
