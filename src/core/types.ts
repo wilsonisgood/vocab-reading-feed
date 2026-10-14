@@ -1,0 +1,75 @@
+// Shared types for every v1 task (AGENT.md §3). Change only in the main
+// session; parallel tasks import from here instead of declaring their own.
+
+/** Where a note came from. v1 only has TED (METHOD §2). */
+export type RfSource = "ted";
+
+/** One row of the browser list, from the TED GraphQL `videos` query (METHOD §2.1). */
+export interface TalkSummary {
+  /** URL slug, also the note's `rf-id`. */
+  slug: string;
+  title: string;
+  speaker: string;
+  /** YYYY-MM-DD. */
+  published: string;
+  /** Seconds. */
+  duration: number;
+  topics: string[];
+  /** 16x9 cover image, full size; null when TED has none (METHOD §2.1). */
+  cover: string | null;
+  /** Same image resized to 320 px wide for list rows (METHOD §2.1). */
+  thumbnail: string | null;
+}
+
+/** Everything the note's frontmatter needs (METHOD §1). */
+export interface TalkMeta extends TalkSummary {
+  source: RfSource;
+  /** Canonical talk page, e.g. https://www.ted.com/talks/<slug>. */
+  url: string;
+  license: string;
+}
+
+/** One paragraph as loaded from the source: text plus start time in seconds (METHOD §2.2, §2.4). */
+export interface Paragraph {
+  text: string;
+  start: number;
+}
+
+/** A fully fetched talk, ready to become a note (METHOD §1). */
+export interface Talk {
+  meta: TalkMeta;
+  paragraphs: Paragraph[];
+  /** Absolute URL of the audio-only media playlist, no intro (METHOD §2.3). */
+  audioUrl: string;
+}
+
+/** A timestamp read back from a note: 0-based source line + start seconds (METHOD §1). */
+export interface ParagraphTime {
+  line: number;
+  start: number;
+}
+
+/** Bumped when the md contract in METHOD §1 changes incompatibly. */
+export const RF_SCHEMA = 1;
+
+export const TED_LICENSE = "CC BY-NC-ND 4.0 — TED Conferences, LLC";
+
+export type PlayMode = "toEnd" | "paragraph";
+
+export interface ReadingFeedSettings {
+  /** Vault folder for loaded notes; TED notes go to `<folder>/TED/` (METHOD §1). */
+  folder: string;
+  /** 0.75 | 1 | 1.25 | 1.5 (METHOD §3.1). */
+  defaultSpeed: number;
+  /** What ▶ does by default (METHOD §3.2). */
+  playMode: PlayMode;
+  /** Follow-scroll on by default (METHOD §3.3). */
+  followScroll: boolean;
+}
+
+export const DEFAULT_SETTINGS: ReadingFeedSettings = {
+  folder: "Reading Feed",
+  defaultSpeed: 1,
+  playMode: "toEnd",
+  followScroll: true,
+};

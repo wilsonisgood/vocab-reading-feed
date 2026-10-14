@@ -8,7 +8,7 @@ v1 目標：**TED、只串流**。面板列出 TED 演講（標題、講者、�
 | 項 | 狀態 | 缺什麼 |
 |---|---|---|
 | 盤點 BBC + TED（`pipeline/tools/survey.py`） | ✅ | — |
-| V1-0 插件骨架 | ⬜ | — |
+| V1-0 插件骨架 | ✅ | — |
 | V1-1 TED client（純邏輯）＋片頭偏移驗證 | ⬜ | V1-0 |
 | V1-2 md 產生器（純邏輯） | ⬜ | V1-0；可跟 V1-1 平行 |
 | V1-3 文章瀏覽面板 | ⬜ | V1-1、V1-2 |
@@ -16,16 +16,16 @@ v1 目標：**TED、只串流**。面板列出 TED 演講（標題、講者、�
 | V1-5 實機驗證（桌面＋iPhone） | ⬜ | V1-3、V1-4 |
 
 ## V1-0 插件骨架（主 session 自己做）
-- [ ] 照 `../obsidian-vocab-tracker` 的工具鏈：`package.json` scripts（typecheck → lint → test → build = `npm run check`）、
+- [x] 照 `../obsidian-vocab-tracker` 的工具鏈：`package.json` scripts（typecheck → lint → test → build = `npm run check`）、
       `tsconfig.json`、`esbuild.config.mjs`、`eslint.config.mjs`、`vitest.config.ts`、`version-bump.mjs`。
       依賴版本照抄 tracker（obsidian 1.13.0、typescript 5.3.3…），另加 `hls.js`。
-- [ ] `manifest.json`：id `reading-feed`、name `Reading Feed`、`isDesktopOnly: false`。
+- [x] `manifest.json`：id `reading-feed`、name `Reading Feed`、`isDesktopOnly: false`。
       ⚠️ id 上架後不能改，第一次發版前跟使用者確認。
-- [ ] 分層照 tracker：`src/core`（純邏輯，不 import obsidian）、`src/services`、`src/ui`、`src/platform`；ESLint 擋。
-- [ ] `.gitignore` 加 `node_modules/`；`main.ts` 空插件能載入；`npm run check` 全過。
+- [x] 分層照 tracker：`src/core`（純邏輯，不 import obsidian）、`src/services`、`src/ui`、`src/platform`；ESLint 擋。
+- [x] `.gitignore` 加 `node_modules/`；`main.ts` 空插件能載入；`npm run check` 全過。
 
 ## V1-1 TED client（`src/core/ted/*`、`src/services/ted/*`）
-- [ ] GraphQL 列表（METHOD §2.1）：分頁、回傳型別化的 `TalkSummary[]`。實測 GraphQL 支不支援分類／關鍵字篩選，結論寫回 METHOD §2.1。
+- [ ] GraphQL 列表（METHOD §2.1）：分頁、回傳型別化的 `TalkSummary[]`（含 `cover`／`thumbnail`）。實測 GraphQL 支不支援分類／關鍵字篩選，結論寫回 METHOD §2.1。
 - [ ] talk 頁解析（§2.2）→ `Talk { meta, paragraphs: {text, start}[], audioUrl }`；master playlist 解析（§2.3）。
 - [ ] 測試：把真實回應存成 `tests/fixtures/ted/*.json|html|m3u8`（只留需要的欄位，檔案要小），測試不連網。
 - [ ] **片頭偏移驗證**（§2.4）：Paul Bloom 那場 + 另外 2 場不同年份的 talk。方法：用 ffmpeg 接起不帶片頭的 low 音軌
@@ -39,7 +39,7 @@ v1 目標：**TED、只串流**。面板列出 TED 演講（標題、講者、�
 
 ## V1-3 文章瀏覽面板（`src/ui/browser/*`）
 - [ ] 右側欄 ItemView + 指令「開啟 Reading Feed」+ ribbon 圖示。
-- [ ] 列表：勾選框、標題、講者、日期、長度、分類標籤；捲到底載入下一頁；已載入的標示「已載入」且不能勾。
+- [ ] 列表：縮圖（`thumbnail`）、勾選框、標題、講者、日期、長度、分類標籤；捲到底載入下一頁；已載入的標示「已載入」且不能勾。
 - [ ] 篩選：分類（下拉）、關鍵字、長度（< 10 分／10–20／> 20）。
 - [ ] 「載入 (n)」按鈕：逐篇抓取 → 寫檔，顯示進度；單篇失敗不影響其他篇，最後列出失敗清單。
 - [ ] 設定頁：存放資料夾、預設速度、▶ 預設「播到結束／只播這段」、跟隨捲動預設開關。

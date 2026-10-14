@@ -16,6 +16,8 @@ published: 2026-09-30
 duration: 734
 topics: [AI, technology, relationships]
 url: https://www.ted.com/talks/paul_bloom_ai_and_the_end_of_loneliness
+cover: https://pi.tedcdn.com/r/talkstar-assets.s3.amazonaws.com/production/talks/talk_…/…-embed.jpg
+thumbnail: https://pi.tedcdn.com/r/talkstar-assets.s3.amazonaws.com/production/talks/talk_…/…-embed.jpg?w=320
 license: "CC BY-NC-ND 4.0 — TED Conferences, LLC"
 tags: [reading-feed, ted]
 ---
@@ -34,6 +36,8 @@ Source: [TED](<url>) · CC BY-NC-ND 4.0
 - 解析用的 regex：`/%%rf:(\d+(?:\.\d+)?)%%\s*$/`。沒有時間戳的段落 = 不能點播，但不影響其他段。
 - 使用者改了文字也沒關係，只要註解還在，該段就能播。
 - 重複載入：用 frontmatter `rf-source` + `rf-id` 判斷，已存在就跳過（列表上標示「已載入」）。
+- `cover`／`thumbnail`：圖片**網址**（不下載圖檔），給筆記列表（例：Bases 卡片檢視的圖片屬性）用；
+  TED 沒有圖時整行省略。2026-10-14 使用者要求加入。
 - 檔名：預設 `<資料夾>/TED/<published> <title>.md`；title 裡 `\/:*?"<>|#^[]` 換成空白。
 
 ## 2. TED：怎麼抓
@@ -43,8 +47,12 @@ Source: [TED](<url>) · CC BY-NC-ND 4.0
 POST https://www.ted.com/graphql   content-type: application/json
 { videos(first: 30, after: <cursor>, language: "en") {
     totalCount pageInfo { endCursor hasNextPage }
-    nodes { slug title presenterDisplayName publishedAt duration topics { nodes { name } } } } }
+    nodes { slug title presenterDisplayName publishedAt duration topics { nodes { name } }
+            primaryImageSet { url aspectRatioName } } } }
 ```
+- 圖片：`primaryImageSet[]` 有 `16x9`（`…-embed.jpg`）、`4x3`（stageshot）、`2x1` 幾種。
+  `cover` = `aspectRatioName == "16x9"` 的 `url`（沒有就取第一張；空陣列 → null）；
+  `thumbnail` = cover 網址加 `?w=320`（`pi.tedcdn.com/r/` 是縮圖服務：290 KB → 9 KB，回 `access-control-allow-origin: *`）。
 - 依新到舊排序。分類篩選、關鍵字搜尋能不能交給 GraphQL（filter／search 參數）由 V1-1 實測；
   不能就在插件端對已載入的頁面篩選。
 - 請求間隔 ≥ 300 ms；結果在記憶體快取，面板開著時不重抓。
