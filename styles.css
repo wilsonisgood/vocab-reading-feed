@@ -1,26 +1,62 @@
 /* src/styles/reading.css */
+.rf-note .metadata-container {
+  display: none;
+}
 .rf-bar {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 5;
   display: flex;
-  flex: 0 0 auto;
   align-items: center;
   flex-wrap: wrap;
-  gap: 6px;
-  padding: 4px 12px;
-  border-bottom: 1px solid var(--background-modifier-border);
+  justify-content: center;
+  gap: 2px;
+  max-width: calc(100% - 16px);
+  padding: 4px 8px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 999px;
   background: var(--background-primary);
+  box-shadow: var(--shadow-s);
+}
+.rf-note .view-content {
+  position: relative;
+}
+.rf-bar-top {
+  top: 8px;
+}
+.rf-bar-bottom {
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 56px);
 }
 .rf-bar button {
-  padding: 2px 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px 8px;
+  background: transparent;
+  box-shadow: none;
+}
+.rf-bar .rf-bar-resume {
+  width: 100%;
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+  border-radius: 999px;
+}
+.rf-bar .rf-disabled {
+  opacity: 0.35;
 }
 .rf-bar-pos {
-  min-width: 4.5em;
+  min-width: 4em;
   text-align: center;
   color: var(--text-muted);
   font-variant-numeric: tabular-nums;
+  font-size: var(--font-ui-smaller);
 }
-.rf-bar-follow.is-active {
-  background: var(--interactive-accent);
-  color: var(--text-on-accent);
+.rf-bar .rf-bar-fav.is-active {
+  color: var(--interactive-accent);
+}
+.rf-bar .rf-bar-fav.is-active svg {
+  fill: currentColor;
 }
 .rf-bar .rf-hidden {
   display: none;
@@ -49,6 +85,8 @@
   display: flex;
   flex-direction: column;
   height: 100%;
+  max-height: 100%;
+  overflow-y: hidden;
   padding: 8px;
   gap: 6px;
   overflow-x: hidden;
@@ -121,8 +159,28 @@
   background: var(--interactive-accent);
   color: var(--text-on-accent);
 }
-.rf-browser-sentinel {
-  height: 1px;
+.rf-row-unavailable {
+  opacity: 0.4;
+}
+.rf-tag-warn {
+  background: var(--background-modifier-error);
+  color: var(--text-on-accent);
+}
+.rf-bookmark {
+  flex: 0 0 auto;
+  cursor: pointer;
+  color: var(--text-faint);
+  display: flex;
+  padding: 2px;
+}
+.rf-bookmark:hover {
+  color: var(--text-normal);
+}
+.rf-bookmark.is-active {
+  color: var(--interactive-accent);
+}
+.rf-bookmark.is-active svg {
+  fill: currentColor;
 }
 .rf-browser-status {
   font-size: var(--font-ui-smaller);

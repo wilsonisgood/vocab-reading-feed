@@ -18,6 +18,8 @@
   background: var(--background-primary);
   box-shadow: var(--shadow-s);
 }
+/* The bar is absolute inside the view so it stays put while the preview scrolls (METHOD §3.1). */
+.rf-note .view-content { position: relative; }
 .rf-bar-top { top: 8px; }
 .rf-bar-bottom { bottom: calc(env(safe-area-inset-bottom, 0px) + 56px); }
 .rf-bar button { display: inline-flex; align-items: center; justify-content: center; padding: 4px 8px; background: transparent; box-shadow: none; }

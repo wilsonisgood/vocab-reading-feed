@@ -23,7 +23,7 @@ __export(main_exports, {
   default: () => ReadingFeedPlugin
 });
 module.exports = __toCommonJS(main_exports);
-var import_obsidian5 = require("obsidian");
+var import_obsidian6 = require("obsidian");
 
 // src/core/types.ts
 var RF_SCHEMA = 1;
@@ -32,8 +32,12 @@ var DEFAULT_SETTINGS = {
   folder: "Reading Feed",
   defaultSpeed: 1,
   playMode: "toEnd",
-  followScroll: true
+  followScroll: true,
+  autoReadingMode: true,
+  favorites: [],
+  noTranscript: []
 };
+var RF_READ_KEY = "rf-read";
 
 // src/platform/ObsidianHttp.ts
 var import_obsidian = require("obsidian");
@@ -343,8 +347,36 @@ ${body.length > 0 ? `${body.join("\n\n")}
 `;
 }
 
+// src/core/ted/noTranscript.json
+var noTranscript_default = [];
+
+// src/core/ted/noTranscript.ts
+var NO_TRANSCRIPT = new Set(noTranscript_default);
+
 // src/core/browser/logic.ts
-var EMPTY_FILTER = { topic: "", keyword: "", length: "all" };
+var EMPTY_FILTER = { topic: "", keyword: "", length: "all", status: "all" };
+var EMPTY_CONTEXT = { loaded: /* @__PURE__ */ new Set(), read: /* @__PURE__ */ new Set(), favorites: /* @__PURE__ */ new Set() };
+function matchesStatus(slug, status2, ctx) {
+  const key = tedKey(slug);
+  switch (status2) {
+    case "all":
+      return true;
+    case "unloaded":
+      return !ctx.loaded.has(key);
+    case "unread":
+      return ctx.loaded.has(key) && !ctx.read.has(key);
+    case "read":
+      return ctx.read.has(key);
+    case "favorite":
+      return ctx.favorites.has(key);
+  }
+}
+function isHidden(slug, builtin) {
+  return builtin.has(slug);
+}
+function isUnavailable(slug, discovered) {
+  return discovered.includes(slug);
+}
 function loadedKey(source, id) {
   return `${source}:${id}`;
 }
@@ -368,14 +400,15 @@ function matchesLength(duration, f) {
       return duration > 1200;
   }
 }
-function matchesFilter(t, f) {
+function matchesFilter(t, f, ctx = EMPTY_CONTEXT) {
+  if (!matchesStatus(t.slug, f.status, ctx)) return false;
   if (f.topic !== "" && !t.topics.includes(f.topic)) return false;
   const kw = f.keyword.trim().toLowerCase();
   if (kw !== "" && !t.title.toLowerCase().includes(kw) && !t.speaker.toLowerCase().includes(kw)) return false;
   return matchesLength(t.duration, f.length);
 }
-function filterTalks(items, f) {
-  return items.filter((t) => matchesFilter(t, f));
+function filterTalks(items, f, ctx = EMPTY_CONTEXT, hidden = /* @__PURE__ */ new Set()) {
+  return items.filter((t) => !isHidden(t.slug, hidden) && matchesFilter(t, f, ctx));
 }
 function collectTopics(items) {
   return [...new Set(items.flatMap((t) => t.topics))].sort((a, b) => a.localeCompare(b));
@@ -394,6 +427,15 @@ function uniquePath(path, exists) {
 var BROWSER_VIEW_TYPE = "reading-feed-browser";
 var MIN_VISIBLE = 8;
 var MAX_STALE_PAGES = 5;
+var FAVORITES_CHANGED = "reading-feed:favorites-changed";
+var NEAR_BOTTOM = 300;
+var STATUS_LABELS = [
+  ["all", "\u72C0\u614B\uFF1A\u5168\u90E8"],
+  ["unloaded", "\u672A\u8F09\u5165"],
+  ["unread", "\u5DF2\u8F09\u5165\u672A\u8B80"],
+  ["read", "\u5DF2\u8B80"],
+  ["favorite", "\u6536\u85CF"]
+];
 var LENGTH_LABELS = [
   ["all", "\u9577\u5EA6\uFF1A\u5168\u90E8"],
   ["lt10", "< 10 \u5206"],
@@ -416,9 +458,11 @@ var BrowserView = class extends import_obsidian2.ItemView {
     this.filter = { ...EMPTY_FILTER };
     this.selected = /* @__PURE__ */ new Set();
     this.loaded = /* @__PURE__ */ new Set();
+    this.read = /* @__PURE__ */ new Set();
+    this.scanTimer = null;
     this.failures = [];
     this.progress = "";
-    this.observer = null;
+    this.onScroll = () => this.checkBottom();
   }
   getViewType() {
     return BROWSER_VIEW_TYPE;
@@ -445,6 +489,12 @@ var BrowserView = class extends import_obsidian2.ItemView {
       this.filter.keyword = kw.value;
       this.onFilterChanged();
     };
+    const statusSel = bar.createEl("select", { cls: "dropdown rf-filter-status" });
+    for (const [v, label] of STATUS_LABELS) statusSel.createEl("option", { value: v, text: label });
+    statusSel.onchange = () => {
+      this.filter.status = statusSel.value;
+      this.onFilterChanged();
+    };
     const lenSel = bar.createEl("select", { cls: "dropdown rf-filter-length" });
     for (const [v, label] of LENGTH_LABELS) lenSel.createEl("option", { value: v, text: label });
     lenSel.onchange = () => {
@@ -452,34 +502,41 @@ var BrowserView = class extends import_obsidian2.ItemView {
       this.onFilterChanged();
     };
     this.listEl = root.createDiv("rf-browser-list");
-    this.sentinel = createDiv("rf-browser-sentinel");
+    this.listEl.addEventListener("scroll", this.onScroll, { passive: true });
+    root.addEventListener("scroll", this.onScroll, { passive: true });
     this.statusEl = root.createDiv("rf-browser-status");
     this.moreBtn = root.createEl("button", { cls: "rf-browser-more", text: "\u518D\u8F09\u5165\u66F4\u591A" });
     this.moreBtn.onclick = () => {
       this.stalled = false;
-      void this.fill(true);
+      void this.fill("manual");
     };
     const foot = root.createDiv("rf-browser-foot");
     this.loadBtn = foot.createEl("button", { cls: "mod-cta rf-browser-load" });
     this.loadBtn.onclick = () => void this.loadSelected();
     this.resultEl = foot.createDiv("rf-browser-result");
-    this.observer = new IntersectionObserver(
-      (entries) => {
-        if (entries.some((e) => e.isIntersecting)) void this.fill(false);
-      },
-      { root: this.listEl, rootMargin: "200px" }
+    this.registerEvent(
+      this.app.metadataCache.on("changed", () => {
+        if (this.scanTimer !== null) window.clearTimeout(this.scanTimer);
+        this.scanTimer = window.setTimeout(() => {
+          this.scanTimer = null;
+          this.scanVault();
+          this.renderList();
+        }, 300);
+      })
     );
-    this.observer.observe(this.sentinel);
+    this.registerEvent(this.app.workspace.on(FAVORITES_CHANGED, () => this.renderList()));
     this.renderAll();
     if (!this.started) {
       this.started = true;
-      await this.fill(true);
+      await this.fill("manual");
     }
+    this.checkBottom();
   }
   async onClose() {
     var _a;
-    (_a = this.observer) == null ? void 0 : _a.disconnect();
-    this.observer = null;
+    (_a = this.listEl) == null ? void 0 : _a.removeEventListener("scroll", this.onScroll);
+    this.contentEl.removeEventListener("scroll", this.onScroll);
+    if (this.scanTimer !== null) window.clearTimeout(this.scanTimer);
   }
   // ---- data ----
   /** Build the loaded-set from rf-source + rf-id frontmatter of every note (METHOD §1). */
@@ -487,32 +544,50 @@ var BrowserView = class extends import_obsidian2.ItemView {
     var _a;
     const { vault, metadataCache } = this.app;
     this.loaded.clear();
+    this.read.clear();
     for (const f of vault.getMarkdownFiles()) {
-      const key = readRfKey((_a = metadataCache.getFileCache(f)) == null ? void 0 : _a.frontmatter);
-      if (key) this.loaded.add(loadedKey(key.source, key.id));
+      const fm = (_a = metadataCache.getFileCache(f)) == null ? void 0 : _a.frontmatter;
+      const key = readRfKey(fm);
+      if (!key) continue;
+      const k = loadedKey(key.source, key.id);
+      this.loaded.add(k);
+      const r = fm == null ? void 0 : fm[RF_READ_KEY];
+      if (r !== void 0 && r !== null && r !== "" && r !== false) this.read.add(k);
     }
   }
+  statusContext() {
+    return { loaded: this.loaded, read: this.read, favorites: new Set(this.deps.getSettings().favorites) };
+  }
   visible() {
-    return filterTalks(this.items, this.filter);
+    return filterTalks(this.items, this.filter, this.statusContext(), NO_TRANSCRIPT);
+  }
+  /** Fetch the next page when either scroll container is near its bottom (or not scrollable). */
+  checkBottom() {
+    if (!this.listEl || this.fetching || !this.hasNext) return;
+    const near = (el) => el.scrollHeight - el.scrollTop - el.clientHeight < NEAR_BOTTOM;
+    if (near(this.listEl) && near(this.contentEl)) void this.fill("scroll");
   }
   onFilterChanged() {
     this.stalled = false;
     this.renderList();
-    void this.fill(false);
+    void this.fill("auto");
   }
   /**
-   * Fetch pages until enough items are visible. `manual` = user pressed the button
-   * (or first load): fetch at least one page regardless of the visible count.
+   * Fetch pages until enough items are visible. `manual` (button / first load) and `scroll`
+   * (reached the bottom) fetch at least one page regardless of the visible count; `manual`
+   * also overrides a stalled state.
    */
-  async fill(manual) {
-    if (this.fetching || !this.hasNext || this.stalled && !manual) return;
+  async fill(mode) {
+    if (this.fetching || !this.hasNext || this.stalled && mode !== "manual") return;
+    const forceFirst = mode !== "auto";
+    const visibleBefore = this.visible().length;
     this.fetching = true;
     this.listError = "";
     this.renderStatus();
     try {
       let stale = 0;
       let first = true;
-      while (this.hasNext && stale < MAX_STALE_PAGES && (first && manual ? true : this.visible().length < MIN_VISIBLE)) {
+      while (this.hasNext && stale < MAX_STALE_PAGES && (first && forceFirst || this.visible().length < MIN_VISIBLE)) {
         first = false;
         const before = this.visible().length;
         const page = await this.deps.client.listPage(this.endCursor);
@@ -523,7 +598,7 @@ var BrowserView = class extends import_obsidian2.ItemView {
         this.refreshTopics();
         this.renderList();
         stale = this.visible().length > before ? 0 : stale + 1;
-        if (!manual && this.visible().length >= MIN_VISIBLE) break;
+        if (mode !== "manual" && this.visible().length >= MIN_VISIBLE) break;
       }
       this.stalled = this.hasNext && stale >= MAX_STALE_PAGES;
     } catch (e) {
@@ -532,6 +607,7 @@ var BrowserView = class extends import_obsidian2.ItemView {
       this.fetching = false;
       this.renderStatus();
     }
+    if (!this.listError && this.visible().length > visibleBefore) this.checkBottom();
   }
   async ensureFolder(path) {
     const { vault } = this.app;
@@ -565,6 +641,8 @@ var BrowserView = class extends import_obsidian2.ItemView {
         ok++;
         this.renderList();
       } catch (e) {
+        this.selected.delete(item.slug);
+        if (e instanceof NoTranscriptError) await this.markNoTranscript(item.slug);
         const reason = e instanceof NoTranscriptError ? "\u6C92\u6709\u82F1\u6587\u9010\u5B57\u7A3F" : e instanceof Error ? e.message : String(e);
         this.failures.push({ title: item.title, reason });
       }
@@ -572,7 +650,25 @@ var BrowserView = class extends import_obsidian2.ItemView {
     }
     this.progress = `\u5B8C\u6210\uFF1A\u6210\u529F ${ok}\uFF0F\u5931\u6557 ${this.failures.length}`;
     this.busy = false;
-    this.renderFooter();
+    this.renderList();
+  }
+  async markNoTranscript(slug) {
+    var _a, _b;
+    const s = this.deps.getSettings();
+    if (s.noTranscript.includes(slug)) return;
+    s.noTranscript.push(slug);
+    await ((_b = (_a = this.deps).saveSettings) == null ? void 0 : _b.call(_a));
+  }
+  async toggleFavorite(slug) {
+    var _a, _b;
+    const s = this.deps.getSettings();
+    const key = tedKey(slug);
+    const i = s.favorites.indexOf(key);
+    if (i >= 0) s.favorites.splice(i, 1);
+    else s.favorites.push(key);
+    await ((_b = (_a = this.deps).saveSettings) == null ? void 0 : _b.call(_a));
+    this.app.workspace.trigger(FAVORITES_CHANGED);
+    this.renderList();
   }
   // ---- rendering ----
   renderAll() {
@@ -592,16 +688,18 @@ var BrowserView = class extends import_obsidian2.ItemView {
     const prevTop = this.listEl.scrollTop;
     this.listEl.empty();
     for (const item of this.visible()) this.renderRow(item);
-    this.listEl.appendChild(this.sentinel);
     this.listEl.scrollTop = prevTop;
     this.renderFooter();
   }
   renderRow(item) {
     const isLoaded = this.loaded.has(tedKey(item.slug));
-    const row = this.listEl.createDiv({ cls: "rf-row" + (isLoaded ? " rf-row-loaded" : "") });
+    const unavailable = !isLoaded && isUnavailable(item.slug, this.deps.getSettings().noTranscript);
+    const row = this.listEl.createDiv({
+      cls: "rf-row" + (isLoaded ? " rf-row-loaded" : "") + (unavailable ? " rf-row-unavailable" : "")
+    });
     const cb = row.createEl("input", { type: "checkbox", cls: "rf-row-check" });
     cb.checked = isLoaded || this.selected.has(item.slug);
-    cb.disabled = isLoaded || this.busy;
+    cb.disabled = isLoaded || unavailable || this.busy;
     cb.onchange = () => {
       if (cb.checked) this.selected.add(item.slug);
       else this.selected.delete(item.slug);
@@ -617,7 +715,15 @@ var BrowserView = class extends import_obsidian2.ItemView {
     body.createDiv({ cls: "rf-row-meta", text: `${item.speaker} \xB7 ${item.published} \xB7 ${formatDuration(item.duration)}` });
     const tags = body.createDiv("rf-row-tags");
     if (isLoaded) tags.createSpan({ cls: "rf-tag rf-tag-loaded", text: "\u5DF2\u8F09\u5165" });
+    if (unavailable) tags.createSpan({ cls: "rf-tag rf-tag-warn", text: "\u6C92\u6709\u82F1\u6587\u9010\u5B57\u7A3F" });
     for (const t of item.topics) tags.createSpan({ cls: "rf-tag", text: t });
+    const fav = this.deps.getSettings().favorites.includes(tedKey(item.slug));
+    const bm = row.createDiv({
+      cls: "rf-bookmark" + (fav ? " is-active" : ""),
+      attr: { "aria-label": fav ? "\u53D6\u6D88\u6536\u85CF" : "\u6536\u85CF", role: "button" }
+    });
+    (0, import_obsidian2.setIcon)(bm, "bookmark");
+    bm.onclick = () => void this.toggleFavorite(item.slug);
   }
   renderStatus() {
     if (!this.statusEl) return;
@@ -644,8 +750,8 @@ var BrowserView = class extends import_obsidian2.ItemView {
 };
 
 // src/ui/browser/installBrowser.ts
-function installBrowser(plugin, client, getSettings) {
-  plugin.registerView(BROWSER_VIEW_TYPE, (leaf) => new BrowserView(leaf, { client, getSettings }));
+function installBrowser(plugin, client, getSettings, saveSettings = () => Promise.resolve()) {
+  plugin.registerView(BROWSER_VIEW_TYPE, (leaf) => new BrowserView(leaf, { client, getSettings, saveSettings }));
   const open = async () => {
     var _a;
     const { workspace } = plugin.app;
@@ -698,11 +804,17 @@ var ReadingFeedSettingTab = class extends import_obsidian3.PluginSettingTab {
         await this.host.saveSettings();
       })
     );
+    new import_obsidian3.Setting(containerEl).setName("\u958B\u555F rf \u7B46\u8A18\u6642\u81EA\u52D5\u5207\u5230\u95B1\u8B80\u6A21\u5F0F").addToggle(
+      (t) => t.setValue(s.autoReadingMode).onChange(async (v) => {
+        s.autoReadingMode = v;
+        await this.host.saveSettings();
+      })
+    );
   }
 };
 
 // src/ui/reading/installReading.ts
-var import_obsidian4 = require("obsidian");
+var import_obsidian5 = require("obsidian");
 
 // src/services/player/logic.ts
 function findIndex(times, t) {
@@ -743,6 +855,11 @@ function shouldFollow(s) {
 function showResume(s) {
   return s.enabled && s.suspended;
 }
+function stepIndex(cur, count, dir) {
+  if (count <= 0) return -1;
+  if (cur < 0) return 0;
+  return Math.min(count - 1, Math.max(0, cur + dir));
+}
 
 // src/services/player/PlayerService.ts
 var HLS_MIME = "application/vnd.apple.mpegurl";
@@ -758,7 +875,8 @@ var PlayerService = class {
     this.listeners = {
       index: /* @__PURE__ */ new Set(),
       state: /* @__PURE__ */ new Set(),
-      follow: /* @__PURE__ */ new Set()
+      follow: /* @__PURE__ */ new Set(),
+      started: /* @__PURE__ */ new Set()
     };
     this.onTime = () => this.handleTime();
     this.onPlayState = () => this.emit("state");
@@ -818,7 +936,11 @@ var PlayerService = class {
       this.emit("index");
       this.emit("follow");
     } else {
-      this.idx = findIndex(times, this.audio.currentTime);
+      const idx = findIndex(times, this.audio.currentTime);
+      if (idx !== this.idx) {
+        this.idx = idx;
+        this.emit("index");
+      }
     }
     this.emit("state");
   }
@@ -832,6 +954,31 @@ var PlayerService = class {
     this.setIndex(index);
     this.dispatchFollow("resume");
     this.emit("state");
+  }
+  /** Play the loaded track from 0 without needing a timestamp table (sync, for note switches; METHOD §3.1). */
+  playStart() {
+    if (this.path === null) return;
+    this.audio.currentTime = 0;
+    this.stopAt = null;
+    this.audio.playbackRate = this.rate;
+    this.safePlay();
+    this.dispatchFollow("resume");
+    this.emit("state");
+  }
+  /** Move to paragraph `index` without starting playback; keeps playing if already playing. */
+  seekTo(index) {
+    if (this.path === null || index < 0 || index >= this.times.length) return;
+    if (!this.audio.paused) return this.playFrom(index);
+    this.audio.currentTime = this.times[index].start;
+    this.stopAt = null;
+    this.setIndex(index);
+    this.dispatchFollow("resume");
+    this.emit("state");
+  }
+  /** Previous / next paragraph (-1 / +1): continues playing when playing, else only moves the position. */
+  step(dir) {
+    const next = stepIndex(this.idx, this.times.length, dir);
+    if (next >= 0) this.seekTo(next);
   }
   toggle() {
     if (this.path === null) return;
@@ -900,6 +1047,7 @@ var PlayerService = class {
   }
   safePlay() {
     try {
+      this.emit("started");
       const p = this.audio.play();
       if (p && typeof p.catch === "function") p.catch(() => this.emit("state"));
     } catch (e) {
@@ -24641,36 +24789,95 @@ var attachHls = (audio, url, http) => {
 };
 
 // src/ui/reading/bar.ts
+var import_obsidian4 = require("obsidian");
 var SPEEDS = [0.75, 1, 1.25, 1.5];
-function createBar(player, onResume) {
-  const el = createDiv({ cls: "rf-bar" });
-  const play = el.createEl("button", { cls: "rf-bar-play" });
+function createBar(player, path, a) {
+  const el = createDiv({ cls: ["rf-bar", import_obsidian4.Platform.isMobile ? "rf-bar-bottom" : "rf-bar-top"] });
+  const btn = (cls, icon, label, fn) => {
+    const b = el.createEl("button", { cls: ["rf-bar-btn", cls], attr: { "aria-label": label } });
+    (0, import_obsidian4.setIcon)(b, icon);
+    b.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      fn();
+    });
+    return b;
+  };
+  const prevNote = btn("rf-bar-prev-note", "skip-back", "\u4E0A\u4E00\u7BC7", () => a.prevNote());
+  const prevPara = btn("rf-bar-prev", "chevron-left", "\u4E0A\u4E00\u6BB5", () => a.prevPara());
+  const play = btn("rf-bar-play", "play", "\u64AD\u653E\uFF0F\u66AB\u505C", () => a.toggle());
+  const nextPara = btn("rf-bar-next", "chevron-right", "\u4E0B\u4E00\u6BB5", () => a.nextPara());
+  const nextNote = btn("rf-bar-next-note", "skip-forward", "\u4E0B\u4E00\u7BC7", () => a.nextNote());
   const pos = el.createSpan({ cls: "rf-bar-pos" });
-  const speed = el.createEl("button", { cls: "rf-bar-speed", attr: { "aria-label": "\u64AD\u653E\u901F\u5EA6" } });
-  const follow = el.createEl("button", { cls: "rf-bar-follow", text: "\u8DDF\u96A8", attr: { "aria-label": "\u8DDF\u96A8\u6372\u52D5" } });
-  const stop = el.createEl("button", { cls: "rf-bar-stop", text: "\u25A0", attr: { "aria-label": "\u505C\u6B62" } });
-  const back = el.createEl("button", { cls: "rf-bar-resume", text: "\u56DE\u5230\u6717\u8B80\u4F4D\u7F6E" });
-  play.addEventListener("click", () => player.toggle());
-  speed.addEventListener("click", () => {
-    const i = SPEEDS.indexOf(player.speed);
-    player.setSpeed(SPEEDS[(i + 1) % SPEEDS.length]);
+  const fav = btn("rf-bar-fav", "bookmark", "\u6536\u85CF", () => a.toggleFavorite());
+  const more = btn("rf-bar-more", "more-horizontal", "\u66F4\u591A", () => void 0);
+  const back = el.createEl("button", { cls: ["rf-bar-resume", "rf-hidden"], text: "\u56DE\u5230\u6717\u8B80\u4F4D\u7F6E" });
+  back.addEventListener("click", () => a.resume());
+  more.addEventListener("click", (e) => {
+    const m = new import_obsidian4.Menu();
+    for (const s of SPEEDS) {
+      m.addItem((i) => i.setTitle(`${s}x`).setChecked(player.speed === s).onClick(() => player.setSpeed(s)));
+    }
+    m.addSeparator();
+    m.addItem(
+      (i) => i.setTitle("\u8DDF\u96A8\u6372\u52D5").setChecked(player.followState.enabled).onClick(() => player.setFollowEnabled(!player.followState.enabled))
+    );
+    m.addItem((i) => i.setTitle("\u505C\u6B62").setIcon("square").onClick(() => a.stop()));
+    m.showAtMouseEvent(e);
   });
-  follow.addEventListener("click", () => player.setFollowEnabled(!player.followState.enabled));
-  stop.addEventListener("click", () => player.stop());
-  back.addEventListener("click", onResume);
+  let lastIcon = "";
   const update = () => {
-    play.setText(player.playing ? "\u23F8" : "\u25B6");
-    const n = player.paragraphs.length;
-    pos.setText(`${Math.max(player.currentIndex + 1, 0)} / ${n}`);
-    speed.setText(`${player.speed}x`);
-    follow.toggleClass("is-active", player.followState.enabled);
-    back.toggleClass("rf-hidden", !showResume(player.followState));
+    const mine = player.notePath === path;
+    const playing = mine && player.playing;
+    const icon = playing ? "pause" : "play";
+    if (icon !== lastIcon) {
+      (0, import_obsidian4.setIcon)(play, icon);
+      lastIcon = icon;
+    }
+    const n = mine ? player.paragraphs.length : a.count();
+    pos.setText(`${mine ? Math.max(player.currentIndex + 1, 0) : 0} / ${n}`);
+    fav.toggleClass("is-active", a.isFavorite());
+    prevNote.toggleClass("rf-disabled", !a.hasPrev());
+    nextNote.toggleClass("rf-disabled", !a.hasNext());
+    prevPara.toggleClass("rf-disabled", n === 0);
+    nextPara.toggleClass("rf-disabled", n === 0);
+    back.toggleClass("rf-hidden", !(mine && showResume(player.followState)));
   };
   update();
   return { el, update };
 }
 
+// src/ui/reading/logic.ts
+function pubKey(v) {
+  if (v instanceof Date && !isNaN(v.getTime())) return v.toISOString().slice(0, 10);
+  return typeof v === "string" ? v.slice(0, 10) : "";
+}
+function sortNotes(items) {
+  return [...items].sort((a, b) => {
+    const pa = pubKey(a.published);
+    const pb = pubKey(b.published);
+    if (pa !== pb) return pa === "" ? 1 : pb === "" ? -1 : pa < pb ? 1 : -1;
+    return a.name < b.name ? -1 : a.name > b.name ? 1 : 0;
+  });
+}
+function neighborNote(items, path, dir) {
+  var _a;
+  const sorted = sortNotes(items);
+  const i = sorted.findIndex((n) => n.path === path);
+  if (i < 0) return null;
+  return (_a = sorted[i + dir]) != null ? _a : null;
+}
+function todayString(d = /* @__PURE__ */ new Date()) {
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${d.getFullYear()}-${m}-${day}`;
+}
+function toggleFavorite(list, key) {
+  return list.includes(key) ? list.filter((k) => k !== key) : [...list, key];
+}
+
 // src/ui/reading/installReading.ts
+var FAV_EVENT = "reading-feed:favorites-changed";
 function createPlayer(plugin, http, getSettings) {
   const player = new PlayerService({
     createAudio: () => document.createElement("audio"),
@@ -24681,7 +24888,7 @@ function createPlayer(plugin, http, getSettings) {
   plugin.register(() => player.destroy());
   return player;
 }
-function installReading(plugin, player, _getSettings) {
+function installReading(plugin, player, getSettings, saveSettings) {
   const app = plugin.app;
   const cache = /* @__PURE__ */ new Map();
   const bars = /* @__PURE__ */ new Map();
@@ -24700,7 +24907,7 @@ function installReading(plugin, player, _getSettings) {
     if (path === null) return [];
     return app.workspace.getLeavesOfType("markdown").map((l) => l.view).filter((v) => {
       var _a;
-      return v instanceof import_obsidian4.MarkdownView && ((_a = v.file) == null ? void 0 : _a.path) === path;
+      return v instanceof import_obsidian5.MarkdownView && ((_a = v.file) == null ? void 0 : _a.path) === path;
     });
   }
   function syncView(scroll) {
@@ -24721,26 +24928,152 @@ function installReading(plugin, player, _getSettings) {
       }
     }
   }
+  function rfFm(file) {
+    var _a;
+    if (!file) return null;
+    const fm = (_a = app.metadataCache.getFileCache(file)) == null ? void 0 : _a.frontmatter;
+    return readRfKey(fm) ? fm : null;
+  }
+  function loadSync(file) {
+    var _a, _b;
+    const fm = rfFm(file);
+    const url = fm == null ? void 0 : fm["rf-audio"];
+    if (typeof url !== "string" || url === "") return null;
+    const times = (_b = (_a = cache.get(file.path)) == null ? void 0 : _a.times) != null ? _b : [];
+    player.load(file.path, url, times);
+    if (times.length === 0) {
+      void getInfo(file, fm).then((info) => {
+        if (info && player.notePath === file.path) player.load(file.path, info.audioUrl, info.times);
+      });
+    }
+    return times;
+  }
+  function startNote(file) {
+    const times = loadSync(file);
+    if (times === null) return;
+    if (times.length > 0) player.playFrom(0);
+    else player.playStart();
+  }
+  function siblings(file) {
+    var _a, _b;
+    const out = [];
+    for (const c of (_b = (_a = file.parent) == null ? void 0 : _a.children) != null ? _b : []) {
+      if (!(c instanceof import_obsidian5.TFile) || c.extension !== "md") continue;
+      const fm = rfFm(c);
+      if (fm) out.push({ path: c.path, name: c.name, published: fm["published"] });
+    }
+    return out;
+  }
+  function goNote(view2, dir) {
+    const file = view2.file;
+    if (!file) return;
+    const n = neighborNote(siblings(file), file.path, dir);
+    const target = n && app.vault.getAbstractFileByPath(n.path);
+    if (!(target instanceof import_obsidian5.TFile)) return;
+    startNote(target);
+    void view2.leaf.openFile(target);
+  }
+  function favKey(file) {
+    var _a;
+    const k = readRfKey((_a = rfFm(file)) != null ? _a : void 0);
+    return k ? loadedKey(k.source, k.id) : null;
+  }
+  function makeActions(view2) {
+    const path = () => {
+      var _a, _b;
+      return (_b = (_a = view2.file) == null ? void 0 : _a.path) != null ? _b : "";
+    };
+    return {
+      prevNote: () => goNote(view2, -1),
+      nextNote: () => goNote(view2, 1),
+      prevPara: () => paraStep(view2, -1),
+      nextPara: () => paraStep(view2, 1),
+      toggle: () => {
+        if (!view2.file) return;
+        if (player.notePath !== path()) startNote(view2.file);
+        else player.toggle();
+      },
+      resume: () => {
+        player.resumeFollow();
+        syncView(true);
+      },
+      stop: () => player.stop(),
+      toggleFavorite: () => {
+        const key = favKey(view2.file);
+        if (!key) return;
+        const s = getSettings();
+        s.favorites = toggleFavorite(s.favorites, key);
+        void (saveSettings == null ? void 0 : saveSettings());
+        app.workspace.trigger(FAV_EVENT);
+      },
+      isFavorite: () => {
+        const key = favKey(view2.file);
+        return key !== null && getSettings().favorites.includes(key);
+      },
+      hasPrev: () => !!view2.file && neighborNote(siblings(view2.file), view2.file.path, -1) !== null,
+      hasNext: () => !!view2.file && neighborNote(siblings(view2.file), view2.file.path, 1) !== null,
+      count: () => {
+        var _a, _b;
+        return (_b = (_a = cache.get(path())) == null ? void 0 : _a.times.length) != null ? _b : 0;
+      }
+    };
+  }
+  function paraStep(view2, dir) {
+    if (!view2.file) return;
+    if (player.notePath !== view2.file.path && loadSync(view2.file) === null) return;
+    player.step(dir);
+  }
   function refreshBars() {
-    const path = player.notePath;
-    const want = new Set(previewViews(path).filter((v) => v.getMode() === "preview"));
-    for (const [view2, bar] of bars) {
-      if (!want.has(view2) || !view2.containerEl.isConnected) {
-        bar.el.remove();
+    var _a, _b, _c, _d, _e;
+    const seen = /* @__PURE__ */ new Set();
+    for (const leaf of app.workspace.getLeavesOfType("markdown")) {
+      const view2 = leaf.view;
+      if (!(view2 instanceof import_obsidian5.MarkdownView)) continue;
+      const rf = rfFm(view2.file) !== null;
+      view2.containerEl.toggleClass("rf-note", rf);
+      if (!rf || view2.getMode() !== "preview") continue;
+      seen.add(view2);
+      let entry = bars.get(view2);
+      if (entry && entry.path !== ((_a = view2.file) == null ? void 0 : _a.path)) {
+        entry.bar.el.remove();
+        entry = void 0;
+      }
+      if (!entry) {
+        entry = { path: (_c = (_b = view2.file) == null ? void 0 : _b.path) != null ? _c : "", bar: createBar(player, (_e = (_d = view2.file) == null ? void 0 : _d.path) != null ? _e : "", makeActions(view2)) };
+        bars.set(view2, entry);
+      }
+      if (entry.bar.el.parentElement !== view2.contentEl) view2.contentEl.appendChild(entry.bar.el);
+      entry.bar.update();
+    }
+    for (const [view2, entry] of bars) {
+      if (!seen.has(view2) || !view2.containerEl.isConnected) {
+        entry.bar.el.remove();
         bars.delete(view2);
       }
     }
-    for (const view2 of want) {
-      let bar = bars.get(view2);
-      if (!bar) {
-        bar = createBar(player, () => {
-          player.resumeFollow();
-          syncView(true);
-        });
-        bars.set(view2, bar);
-      }
-      if (bar.el.parentElement !== view2.contentEl) view2.contentEl.prepend(bar.el);
-      bar.update();
+  }
+  const autoDone = /* @__PURE__ */ new WeakMap();
+  function tryAutoPreview(file) {
+    var _a;
+    if (!file || !getSettings().autoReadingMode || !rfFm(file)) return;
+    const view2 = app.workspace.getActiveViewOfType(import_obsidian5.MarkdownView);
+    if (!view2 || ((_a = view2.file) == null ? void 0 : _a.path) !== file.path || autoDone.get(view2.leaf) === file.path) return;
+    autoDone.set(view2.leaf, file.path);
+    if (view2.getMode() === "preview") return;
+    const st = view2.leaf.getViewState();
+    void view2.leaf.setViewState({ ...st, state: { ...st.state, mode: "preview" } });
+  }
+  const readMarked = /* @__PURE__ */ new Set();
+  function markRead() {
+    const path = player.notePath;
+    if (path === null || readMarked.has(path)) return;
+    readMarked.add(path);
+    const file = app.vault.getAbstractFileByPath(path);
+    if (file instanceof import_obsidian5.TFile) {
+      void app.fileManager.processFrontMatter(file, (fm) => {
+        var _a, _b;
+        (_b = fm[_a = RF_READ_KEY]) != null ? _b : fm[_a] = todayString();
+      });
     }
   }
   function addPlayButton(target, path, info, line) {
@@ -24765,7 +25098,7 @@ function installReading(plugin, player, _getSettings) {
     var _a;
     if (!readRfKey(ctx.frontmatter)) return;
     const file = app.vault.getAbstractFileByPath(ctx.sourcePath);
-    if (!(file instanceof import_obsidian4.TFile)) return;
+    if (!(file instanceof import_obsidian5.TFile)) return;
     const info = await getInfo(file, ctx.frontmatter);
     const sec = ctx.getSectionInfo(el);
     if (!info || !sec) return;
@@ -24787,10 +25120,22 @@ function installReading(plugin, player, _getSettings) {
     const file = app.workspace.getActiveFile();
     if (file) void getInfo(file, (_a = app.metadataCache.getFileCache(file)) == null ? void 0 : _a.frontmatter);
   };
-  plugin.registerEvent(app.workspace.on("file-open", () => {
-    warm();
-    refreshBars();
-  }));
+  plugin.registerEvent(
+    app.workspace.on("file-open", (f) => {
+      warm();
+      tryAutoPreview(f);
+      refreshBars();
+    })
+  );
+  plugin.registerEvent(
+    app.metadataCache.on("changed", (f) => {
+      var _a;
+      if (f.path === ((_a = app.workspace.getActiveFile()) == null ? void 0 : _a.path)) tryAutoPreview(f);
+      refreshBars();
+    })
+  );
+  const favEvents = app.workspace;
+  plugin.registerEvent(favEvents.on(FAV_EVENT, () => bars.forEach((b) => b.bar.update())));
   plugin.registerEvent(app.workspace.on("active-leaf-change", () => {
     warm();
     refreshBars();
@@ -24799,31 +25144,36 @@ function installReading(plugin, player, _getSettings) {
   const onUserScroll = (e) => {
     const t = e.target;
     if (!(t instanceof Node) || player.notePath === null) return;
-    for (const [view2, bar] of bars) {
-      if (view2.contentEl.contains(t) && !bar.el.contains(t)) return player.userScrolled();
+    for (const [view2, { path, bar }] of bars) {
+      if (path === player.notePath && view2.contentEl.contains(t) && !bar.el.contains(t)) return player.userScrolled();
     }
   };
   plugin.registerDomEvent(document, "wheel", onUserScroll, { passive: true });
   plugin.registerDomEvent(document, "touchmove", onUserScroll, { passive: true });
   const offs = [
-    player.on("index", () => syncView(true)),
-    player.on("follow", () => {
-      bars.forEach((b) => b.update());
+    player.on("index", () => {
+      syncView(true);
+      bars.forEach((b) => b.bar.update());
     }),
+    player.on("follow", () => {
+      bars.forEach((b) => b.bar.update());
+    }),
+    player.on("started", markRead),
     player.on("state", () => {
       refreshBars();
     })
   ];
   plugin.register(() => {
     offs.forEach((off) => off());
-    bars.forEach((b) => b.el.remove());
+    bars.forEach((b) => b.bar.el.remove());
     bars.clear();
+    app.workspace.getLeavesOfType("markdown").forEach((l) => l.view.containerEl.removeClass("rf-note"));
   });
   app.workspace.onLayoutReady(refreshBars);
 }
 
 // main.ts
-var ReadingFeedPlugin = class extends import_obsidian5.Plugin {
+var ReadingFeedPlugin = class extends import_obsidian6.Plugin {
   constructor() {
     super(...arguments);
     this.settings = { ...DEFAULT_SETTINGS };
@@ -24832,12 +25182,15 @@ var ReadingFeedPlugin = class extends import_obsidian5.Plugin {
     await this.loadSettings();
     const http = new ObsidianHttp();
     const player = createPlayer(this, http, () => this.settings);
-    installReading(this, player, () => this.settings);
-    installBrowser(this, new TedClient(http), () => this.settings);
+    installReading(this, player, () => this.settings, () => this.saveSettings());
+    installBrowser(this, new TedClient(http), () => this.settings, () => this.saveSettings());
     this.addSettingTab(new ReadingFeedSettingTab(this.app, this));
   }
   async loadSettings() {
-    this.settings = { ...DEFAULT_SETTINGS, ...await this.loadData() };
+    const saved = await this.loadData();
+    this.settings = { ...DEFAULT_SETTINGS, ...saved };
+    this.settings.favorites = [...this.settings.favorites];
+    this.settings.noTranscript = [...this.settings.noTranscript];
   }
   async saveSettings() {
     await this.saveData(this.settings);

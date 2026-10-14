@@ -13,13 +13,17 @@ export default class ReadingFeedPlugin extends Plugin {
     await this.loadSettings();
     const http = new ObsidianHttp();
     const player = createPlayer(this, http, () => this.settings);
-    installReading(this, player, () => this.settings);
-    installBrowser(this, new TedClient(http), () => this.settings);
+    installReading(this, player, () => this.settings, () => this.saveSettings());
+    installBrowser(this, new TedClient(http), () => this.settings, () => this.saveSettings());
     this.addSettingTab(new ReadingFeedSettingTab(this.app, this));
   }
 
   async loadSettings() {
-    this.settings = { ...DEFAULT_SETTINGS, ...((await this.loadData()) as Partial<ReadingFeedSettings> | null) };
+    const saved = (await this.loadData()) as Partial<ReadingFeedSettings> | null;
+    this.settings = { ...DEFAULT_SETTINGS, ...saved };
+    // Arrays are mutated in place by the panel; never share DEFAULT_SETTINGS' instances.
+    this.settings.favorites = [...this.settings.favorites];
+    this.settings.noTranscript = [...this.settings.noTranscript];
   }
 
   async saveSettings() {
