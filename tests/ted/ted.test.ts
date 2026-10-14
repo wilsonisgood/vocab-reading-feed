@@ -97,6 +97,7 @@ describe("TedClient", () => {
         calls.push({ req, at: t });
         return Promise.resolve(routes(req));
       },
+      requestBinary: () => Promise.reject(new Error("unused")),
     };
     const client = new TedClient(http, { now: () => t, sleep: (ms) => ((t += ms), Promise.resolve()) });
     return { client, calls };

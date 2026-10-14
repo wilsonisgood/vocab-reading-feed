@@ -57,8 +57,10 @@ POST https://www.ted.com/graphql   content-type: application/json
 - 圖片：`primaryImageSet[]` 有 `16x9`（`…-embed.jpg`）、`4x3`（stageshot）、`2x1` 幾種。
   `cover` = `aspectRatioName == "16x9"` 的 `url`（沒有就取第一張；空陣列 → null）；
   `thumbnail` = cover 網址加 `?w=320`（`pi.tedcdn.com/r/` 是縮圖服務：290 KB → 9 KB，回 `access-control-allow-origin: *`）。
-- 依新到舊排序。分類篩選、關鍵字搜尋能不能交給 GraphQL（filter／search 參數）由 V1-1 實測；
-  不能就在插件端對已載入的頁面篩選。
+- 依新到舊排序；cursor 是像 offset 的字串。
+- **GraphQL 不能篩選**（V1-1 實測）：`videos` 只接受 `first／after／before／last／language／id`，introspection 關閉；
+  分類、關鍵字、長度一律在插件端對已載入的頁面篩選（topics、title、speaker、duration）。
+- 列表沒有「有沒有英文 transcript」欄位 → 只能在載入單篇時發現（`NoTranscriptError`），列在失敗清單。
 - 請求間隔 ≥ 300 ms；結果在記憶體快取，面板開著時不重抓。
 
 ### 2.2 單篇（talk 頁的 `__NEXT_DATA__`）
@@ -67,7 +69,7 @@ POST https://www.ted.com/graphql   content-type: application/json
   文字 = 各 cue 的 `text` 以空白串接（cue 內的換行也換成空白、連續空白壓成一個）。
 - 段落開始時間 = 第一個 cue 的 `time`（毫秒 → 秒），再依 §2.4 處理片頭偏移。
 - 中繼資料：`props.pageProps.videoData` 的 `title`、`presenterDisplayName`、`publishedAt`、`duration`、`topics.nodes[].name`。
-- 沒有英文 transcript 的 talk：列表上標示，不能載入。
+- 沒有英文 transcript（`transcriptData` 為 null 或 paragraphs 為空）→ `NoTranscriptError`；列表無法預先標示（見 §2.1）。
 
 ### 2.3 音源
 - `videoData.hlsUrl`（master playlist）**去掉 `intro_master_id` 參數**（不要片頭）。
@@ -75,10 +77,11 @@ POST https://www.ted.com/graphql   content-type: application/json
   轉成絕對網址寫進 `rf-audio`；沒有 low 就用 medium。
 - 片段是 MPEG-TS（AAC），回應帶 `access-control-allow-origin: *`。
 
-### 2.4 片頭偏移（⚠️ V1-1 驗證後寫回本節）
-- 已知：帶 `intro_master_id` 的版本前面多一段片頭（例：12009 帶片頭 734.2 s、不帶 730.7 s）。
-- 待驗：cue `time` 是以哪一版為準。如果是帶片頭版，載入時 `start` 要扣掉片頭長度
-  （= 兩個 media playlist 的 EXTINF 總和差）。
+### 2.4 片頭偏移（V1-1 驗證，2026-10-14）
+- **cue `time` 以不帶片頭版為準 → 不用扣**：`start` = 第一個 cue 的毫秒 ÷ 1000，搭配去掉 `intro_master_id` 的音源，時間軸一致。
+- 只要去掉 `hlsUrl` 的 `intro_master_id`：帶參數時 master 裡每個 audio URI 都會帶同一參數，去掉後就乾淨。
+- 舊 talk（約 2010）的 cue 只精確到整秒；跟隨與 ▶ 仍可用，但段首可能早／晚 ≤ 1 s。
+- 驗證工具：`pipeline/tools/ted_intro_check.py`（ffmpeg 取前 90 s ＋ mlx-whisper 逐詞時間，用連續 3 詞比對，只用 1 詞會被 "I" 誤配）。數字見 LEDGER。
 
 ## 3. 播放與同步
 

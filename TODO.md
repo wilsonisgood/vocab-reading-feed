@@ -9,7 +9,7 @@ v1 目標：**TED、只串流**。面板列出 TED 演講（標題、講者、�
 |---|---|---|
 | 盤點 BBC + TED（`pipeline/tools/survey.py`） | ✅ | — |
 | V1-0 插件骨架 | ✅ | — |
-| V1-1 TED client（純邏輯）＋片頭偏移驗證 | 🔵 | sonnet 背景；worktree `.claude/worktrees/v1-ted`（`feat/v1-ted`）；看該分支 git log |
+| V1-1 TED client（純邏輯）＋片頭偏移驗證 | ✅ | — |
 | V1-2 md 產生器（純邏輯） | ✅ | — |
 | V1-3 文章瀏覽面板 | ⬜ | V1-1、V1-2 |
 | V1-4 播放器與同步 | ✅ | 實機項目留給 V1-5 |
@@ -25,10 +25,10 @@ v1 目標：**TED、只串流**。面板列出 TED 演講（標題、講者、�
 - [x] `.gitignore` 加 `node_modules/`；`main.ts` 空插件能載入；`npm run check` 全過。
 
 ## V1-1 TED client（`src/core/ted/*`、`src/services/ted/*`）
-- [ ] GraphQL 列表（METHOD §2.1）：分頁、回傳型別化的 `TalkSummary[]`（含 `cover`／`thumbnail`）。實測 GraphQL 支不支援分類／關鍵字篩選，結論寫回 METHOD §2.1。
-- [ ] talk 頁解析（§2.2）→ `Talk { meta, paragraphs: {text, start}[], audioUrl }`；master playlist 解析（§2.3）。
-- [ ] 測試：把真實回應存成 `tests/fixtures/ted/*.json|html|m3u8`（只留需要的欄位，檔案要小），測試不連網。
-- [ ] **片頭偏移驗證**（§2.4）：Paul Bloom 那場 + 另外 2 場不同年份的 talk。方法：用 ffmpeg 接起不帶片頭的 low 音軌
+- [x] GraphQL 列表（METHOD §2.1）：分頁、回傳型別化的 `TalkSummary[]`（含 `cover`／`thumbnail`）。實測 GraphQL 支不支援分類／關鍵字篩選，結論寫回 METHOD §2.1。
+- [x] talk 頁解析（§2.2）→ `Talk { meta, paragraphs: {text, start}[], audioUrl }`；master playlist 解析（§2.3）。
+- [x] 測試：把真實回應存成 `tests/fixtures/ted/*.json|html|m3u8`（只留需要的欄位，檔案要小），測試不連網。
+- [x] **片頭偏移驗證**（§2.4）：Paul Bloom 那場 + 另外 2 場不同年份的 talk。方法：用 ffmpeg 接起不帶片頭的 low 音軌
       前 90 秒，`pip3 install mlx-whisper` 轉寫，比對前 3 段 cue 時間和實際開口時間。結論寫回 METHOD §2.4、數字寫進 LEDGER。
       驗證用的腳本放 `pipeline/tools/ted_intro_check.py`。
 
@@ -40,7 +40,7 @@ v1 目標：**TED、只串流**。面板列出 TED 演講（標題、講者、�
 ## V1-3 文章瀏覽面板（`src/ui/browser/*`）
 - [ ] 右側欄 ItemView + 指令「開啟 Reading Feed」+ ribbon 圖示。
 - [ ] 列表：縮圖（`thumbnail`）、勾選框、標題、講者、日期、長度、分類標籤；捲到底載入下一頁；已載入的標示「已載入」且不能勾。
-- [ ] 篩選：分類（下拉）、關鍵字、長度（< 10 分／10–20／> 20）。
+- [ ] 篩選：分類（下拉）、關鍵字、長度（< 10 分／10–20／> 20）——GraphQL 不支援，插件端篩已載入頁面。
 - [ ] 「載入 (n)」按鈕：逐篇抓取 → 寫檔，顯示進度；單篇失敗不影響其他篇，最後列出失敗清單。
 - [ ] 設定頁：存放資料夾、預設速度、▶ 預設「播到結束／只播這段」、跟隨捲動預設開關。
 - [ ] 手機版版面（窄螢幕不能橫向捲動）。
