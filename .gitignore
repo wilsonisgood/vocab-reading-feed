@@ -3,3 +3,5 @@ __pycache__/
 .claude/
 node_modules/
 data.json
+pipeline/data/ted_transcript.jsonl
+pipeline/data/ted_no_transcript.log

@@ -23,3 +23,6 @@
   totalCount 5278，依新到舊，含 topics／publishedAt／duration，且比 sitemap 新（有 10/13 那場）→ v1 列表用它，不需要伺服器。
 - 2026-10-14 TED HLS 的 m3u8 與 .ts 片段都回 `access-control-allow-origin: *` → hls.js 可直接串流。
   音軌 low = 單聲道約 64 kbps（6 秒片段約 48 KB），medium = 立體聲約 140 kbps。
+- 2026-10-14 TED 沒有英文逐字稿的 talk：全量掃 5278 篇（GraphQL 列表 + 逐篇 talk 頁，1 req/s，約 90 分鐘），
+  **204 篇**沒有（3.9%；Beyond the Talk 14 篇，其餘多是對談、表演、多人座談），無法判斷 0 篇。
+  清單 → `src/core/ted/noTranscript.json`（METHOD §2.5）；逐篇判決留在 `pipeline/data/ted_transcript.jsonl`（不進 git）。
