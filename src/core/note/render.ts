@@ -1,6 +1,7 @@
 import { RF_SCHEMA } from "../types";
 import type { Paragraph, Talk, TalkMeta } from "../types";
 import { yamlList, yamlString } from "./yaml";
+import { segmentTalk, sectionHeading, type Chunk } from "./segment";
 
 /** Seconds with two decimals, as written inside `%%rf:…%%` (METHOD §1). */
 export function formatTime(sec: number): string {
@@ -34,7 +35,12 @@ export function escapeParagraph(text: string): string {
   return s;
 }
 
-export function renderParagraph(p: Paragraph): string {
+/** Heading text: same inline escaping as a paragraph (it never starts with block syntax: it opens with the clock). */
+export function escapeHeading(text: string): string {
+  return text.replace(/\s+/g, " ").trim().replace(/%(?=%)/g, "%\\").replace(/[#[\]]/g, "\\$&");
+}
+
+export function renderParagraph(p: Paragraph | Chunk): string {
   return `${escapeParagraph(p.text)} %%rf:${formatTime(p.start)}%%`;
 }
 
@@ -62,7 +68,10 @@ export function renderNote(talk: Talk): string {
     "---",
   );
 
-  const body = talk.paragraphs.filter((p) => p.text.trim() !== "").map(renderParagraph);
+  // `## <clock> <opening words>` per ~2.5–3 min section, then its small paragraphs (METHOD §1.1).
+  const body = segmentTalk(talk.paragraphs).map((sec) =>
+    [`## ${escapeHeading(sectionHeading(sec))}`, ...sec.chunks.map(renderParagraph)].join("\n\n"),
+  );
   const footer = `---\nSource: [TED](<${meta.url}>) · CC BY-NC-ND 4.0`;
   return `${fm.join("\n")}\n\n${body.length > 0 ? `${body.join("\n\n")}\n\n` : ""}${footer}\n`;
 }

@@ -49,10 +49,12 @@ export function parseTalkPage(
   const raw = props?.transcriptData?.translation?.paragraphs ?? [];
   const paragraphs: Paragraph[] = [];
   for (const p of raw) {
-    const cues = p.cues ?? [];
-    const text = cues.map((c) => c.text).join(" ").replace(/\s+/g, " ").trim();
-    if (!text || cues.length === 0) continue;
-    paragraphs.push({ text, start: cues[0].time / 1000 });
+    const cues = (p.cues ?? [])
+      .map((c) => ({ text: c.text.replace(/\s+/g, " ").trim(), start: c.time / 1000 }))
+      .filter((c) => c.text !== "");
+    const text = cues.map((c) => c.text).join(" ");
+    if (!text) continue;
+    paragraphs.push({ text, start: cues[0].start, cues });
   }
   if (paragraphs.length === 0) throw new NoTranscriptError(slug);
   if (!video.hlsUrl) throw new Error(`talk ${slug} has no hlsUrl`);

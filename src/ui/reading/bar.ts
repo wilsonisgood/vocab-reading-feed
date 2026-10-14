@@ -20,6 +20,8 @@ export interface DockInfo {
   title: string;
   /** Current paragraph text ("" when none). */
   snippet: string;
+  /** "第 2 / 5 節" ("" when the note has no sections). */
+  section: string;
   /** The playing note is not the one in this view. */
   elsewhere: boolean;
 }
@@ -192,7 +194,7 @@ export function createBar(player: PlayerService, path: string, a: BarActions): B
     title.toggleClass("is-link", info.elsewhere);
     const n = target ? player.paragraphs.length : a.count();
     const cur = target ? Math.max(player.currentIndex + 1, 0) : 0;
-    meta.setText(`段落 ${cur} / ${n} · ${player.speed}x`);
+    meta.setText(`${info.section ? `${info.section} · ` : ""}段落 ${cur} / ${n} · ${player.speed}x`);
     snippet.setText(info.snippet);
     snippet.toggleClass("rf-hidden", info.snippet === "");
     prevNote.toggleClass("rf-disabled", !a.hasPrev());

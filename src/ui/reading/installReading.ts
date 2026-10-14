@@ -1,5 +1,5 @@
 // Reading-mode glue (METHOD §3): ▶ per paragraph, playback bar, follow-scroll.
-import { MarkdownView, Platform, TFile, type App, type Plugin, type MarkdownPostProcessorContext } from "obsidian";
+import { MarkdownView, Platform, TFile, type App, type HeadingCache, type Plugin, type MarkdownPostProcessorContext } from "obsidian";
 import type { HttpPort } from "../../core/ports";
 import { RF_READ_KEY, type ParagraphTime, type ReadingFeedSettings } from "../../core/types";
 import { parseTimestamps, readRfKey, timestampTexts } from "../../core/note/parse";
@@ -68,6 +68,23 @@ export function installReading(
       .filter((v): v is MarkdownView => v instanceof MarkdownView && v.file?.path === path);
   }
 
+  /** Playback entered a folded section: unfold it so the highlight is visible (METHOD §1.1). True if it did. */
+  function unfoldSectionOf(view: MarkdownView, line: number): boolean {
+    const head = sectionHeads(view.file).filter((h) => h.position.start.line < line).pop();
+    if (!head) return false;
+    let done = false;
+    for (const h of Array.from(view.containerEl.querySelectorAll<HTMLElement>("h2[data-heading]"))) {
+      if (h.getAttribute("data-heading") !== head.heading) continue;
+      const block = h.closest<HTMLElement>(".is-collapsed");
+      const icon = block?.querySelector<HTMLElement>(".heading-collapse-indicator");
+      if (icon) {
+        icon.click();
+        done = true;
+      }
+    }
+    return done;
+  }
+
   /** Highlight the active paragraph; scroll to it when following. */
   function syncView(scroll: boolean): void {
     const path = player.notePath;
@@ -77,6 +94,11 @@ export function installReading(
       const root = view.containerEl;
       root.querySelectorAll(".rf-active").forEach((n) => n.removeClass("rf-active"));
       if (!active) continue;
+      if (unfoldSectionOf(view, active.line)) {
+        // The section's paragraphs are drawn after the click; highlight / scroll once they exist.
+        window.setTimeout(() => syncView(scroll), 150);
+        continue;
+      }
       const target = root.querySelector<HTMLElement>(`[data-rf-idx="${player.currentIndex}"]`);
       target?.addClass("rf-active");
       if (!scroll || !player.followActive) continue;
@@ -153,6 +175,19 @@ export function installReading(
     return typeof t === "string" && t !== "" ? t : file?.basename ?? "";
   }
 
+  /** Level-2 headings of a note (the ~3 min sections, METHOD §1.1). */
+  function sectionHeads(file: TFile | null): HeadingCache[] {
+    return (file ? (app.metadataCache.getFileCache(file)?.headings ?? []) : []).filter((h) => h.level === 2);
+  }
+
+  /** "第 2 / 5 節" for the section holding `line`; "" for notes without sections (rf-schema 1). */
+  function sectionLabel(file: TFile | null, line: number | undefined): string {
+    const heads = sectionHeads(file);
+    if (heads.length === 0 || line === undefined) return "";
+    const n = heads.filter((h) => h.position.start.line < line).length;
+    return n > 0 ? `第 ${n} / ${heads.length} 節` : "";
+  }
+
   /** Open the playing note (reuse a tab that already shows it), then scroll to the current paragraph. */
   function jumpToPlaying(view: MarkdownView): void {
     const file = fileAt(player.notePath);
@@ -200,7 +235,12 @@ export function installReading(
         const f = targetFile(view);
         const texts = f ? cache.get(f.path)?.texts : undefined;
         const snippet = player.notePath !== null ? (texts?.[player.currentIndex] ?? "") : "";
-        return { title: noteTitle(f), snippet, elsewhere: player.notePath !== null && player.notePath !== view.file?.path };
+        return {
+          title: noteTitle(f),
+          snippet,
+          section: player.notePath !== null ? sectionLabel(f, player.paragraphs[player.currentIndex]?.line) : "",
+          elsewhere: player.notePath !== null && player.notePath !== view.file?.path,
+        };
       },
       getPos: () => getSettings().dockPos[Platform.isMobile ? "mobile" : "desktop"],
       setPos: (p) => {
@@ -289,6 +329,20 @@ export function installReading(
     target.prepend(btn);
   }
 
+  function addSectionButton(h: HTMLElement, path: string, info: NoteInfo, idx: number): void {
+    if (h.querySelector(":scope > .rf-play")) return;
+    const btn = createEl("button", { cls: ["rf-play", "rf-play-section"], text: "▶", attr: { "aria-label": "從這一節開始播放" } });
+    btn.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const fresh = cache.get(path) ?? info;
+      if (idx >= fresh.times.length) return;
+      player.load(path, fresh.audioUrl, fresh.times);
+      player.playFrom(idx);
+    });
+    h.append(btn); // after the text: the fold arrow sits where a leading ▶ would be
+  }
+
   plugin.registerMarkdownPostProcessor(async (el: HTMLElement, ctx: MarkdownPostProcessorContext) => {
     if (!readRfKey(ctx.frontmatter)) return;
     const file = app.vault.getAbstractFileByPath(ctx.sourcePath);
@@ -302,7 +356,13 @@ export function installReading(
     info.times.forEach((t, k) => {
       if (t.line >= sec.lineStart && t.line <= sec.lineEnd) hits.push(k);
     });
-    if (hits.length === 0) return;
+    if (hits.length === 0) {
+      // Section heading (METHOD §1.1): ▶ plays from the section's first small paragraph.
+      const h = el.querySelector<HTMLElement>(":scope > h2");
+      const first = info.times.findIndex((t) => t.line > sec.lineEnd);
+      if (h && first >= 0) addSectionButton(h, file.path, info, first);
+      return;
+    }
     const items = Array.from(el.querySelectorAll<HTMLElement>(":scope > p, :scope li"));
     if (hits.length > 1 && items.length === hits.length) {
       hits.forEach((idx, i) => addPlayButton(items[i], file.path, info, idx));

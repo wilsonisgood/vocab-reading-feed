@@ -26,7 +26,7 @@ module.exports = __toCommonJS(main_exports);
 var import_obsidian6 = require("obsidian");
 
 // src/core/types.ts
-var RF_SCHEMA = 1;
+var RF_SCHEMA = 2;
 var TED_LICENSE = "CC BY-NC-ND 4.0 \u2014 TED Conferences, LLC";
 var DEFAULT_SETTINGS = {
   folder: "Reading Feed",
@@ -142,10 +142,10 @@ function parseTalkPage(html, slug) {
   const raw = (_e = (_d = (_c = props == null ? void 0 : props.transcriptData) == null ? void 0 : _c.translation) == null ? void 0 : _d.paragraphs) != null ? _e : [];
   const paragraphs = [];
   for (const p of raw) {
-    const cues = (_f = p.cues) != null ? _f : [];
-    const text = cues.map((c) => c.text).join(" ").replace(/\s+/g, " ").trim();
-    if (!text || cues.length === 0) continue;
-    paragraphs.push({ text, start: cues[0].time / 1e3 });
+    const cues = ((_f = p.cues) != null ? _f : []).map((c) => ({ text: c.text.replace(/\s+/g, " ").trim(), start: c.time / 1e3 })).filter((c) => c.text !== "");
+    const text = cues.map((c) => c.text).join(" ");
+    if (!text) continue;
+    paragraphs.push({ text, start: cues[0].start, cues });
   }
   if (paragraphs.length === 0) throw new NoTranscriptError(slug);
   if (!video.hlsUrl) throw new Error(`talk ${slug} has no hlsUrl`);
@@ -304,6 +304,115 @@ function yamlList(items) {
   return `[${items.map((i) => yamlString(i, true)).join(", ")}]`;
 }
 
+// src/core/note/segment.ts
+var SHORT_SENTENCE_WORDS = 8;
+var SECTION_MIN_SEC = 150;
+var SECTION_MAX_SEC = 180;
+var SECTION_TAIL_SEC = 45;
+var HEADING_WORDS = 7;
+var LAST_CUE_SEC = 3;
+var ABBREVIATIONS = /* @__PURE__ */ new Set(["mr", "mrs", "ms", "dr", "st", "jr", "sr", "vs", "prof", "mt", "etc", "e.g", "i.e"]);
+function wordCount(s) {
+  return s.split(/\s+/).filter((w) => w !== "").length;
+}
+function sentenceStarts(text) {
+  var _a, _b;
+  const out = [0];
+  const re = /[.?!]+["”’'\])]*\s+/g;
+  let m;
+  while ((m = re.exec(text)) !== null) {
+    const next = m.index + m[0].length;
+    if (next >= text.length) break;
+    if (!/["“‘'([A-Z0-9]/.test(text[next])) continue;
+    if (text[m.index] === ".") {
+      const word = (_b = (_a = /([A-Za-z.]+)$/.exec(text.slice(0, m.index))) == null ? void 0 : _a[1]) != null ? _b : "";
+      if (ABBREVIATIONS.has(word.toLowerCase())) continue;
+      if (/^[A-Z]$/.test(word) || /^(?:[A-Za-z]\.)+[A-Za-z]$/.test(word)) continue;
+    }
+    out.push(next);
+  }
+  return out;
+}
+function timeAt(cues, offsets, offset, end) {
+  let i = 0;
+  while (i + 1 < cues.length && offsets[i + 1] <= offset) i++;
+  const cueEnd = i + 1 < cues.length ? cues[i + 1].start : end;
+  const len = cues[i].text.length;
+  const frac = len > 0 ? Math.min(1, Math.max(0, (offset - offsets[i]) / len)) : 0;
+  return cues[i].start + frac * Math.max(0, cueEnd - cues[i].start);
+}
+function splitParagraph(p, nextStart) {
+  const cues = p.cues && p.cues.length > 0 ? p.cues : [{ text: p.text, start: p.start }];
+  const text = cues.map((c) => c.text).join(" ");
+  const offsets = [];
+  let at = 0;
+  for (const c of cues) {
+    offsets.push(at);
+    at += c.text.length + 1;
+  }
+  const lastStart = cues[cues.length - 1].start;
+  const end = nextStart !== null && nextStart > lastStart ? nextStart : lastStart + LAST_CUE_SEC;
+  const starts = sentenceStarts(text);
+  const sentences = starts.map((s, i) => {
+    var _a;
+    return { from: s, text: text.slice(s, (_a = starts[i + 1]) != null ? _a : text.length).trim() };
+  });
+  const groups = [];
+  let buf = null;
+  for (const s of sentences) {
+    buf = buf ? { from: buf.from, text: `${buf.text} ${s.text}` } : { ...s };
+    if (wordCount(buf.text) > SHORT_SENTENCE_WORDS) {
+      groups.push(buf);
+      buf = null;
+    }
+  }
+  if (buf) {
+    const prev = groups[groups.length - 1];
+    if (prev) prev.text = `${prev.text} ${buf.text}`;
+    else groups.push(buf);
+  }
+  return groups.map((g, i) => ({
+    text: g.text,
+    start: i === 0 ? p.start : timeAt(cues, offsets, g.from, end)
+  }));
+}
+function segmentTalk(paragraphs) {
+  const ps = paragraphs.filter((p) => p.text.trim() !== "");
+  const flat = [];
+  ps.forEach((p, i) => {
+    var _a, _b;
+    splitParagraph(p, (_b = (_a = ps[i + 1]) == null ? void 0 : _a.start) != null ? _b : null).forEach((c, k) => flat.push({ ...c, paraStart: k === 0 }));
+  });
+  if (flat.length === 0) return [];
+  const last = flat[flat.length - 1].start;
+  const sections = [{ start: flat[0].start, chunks: [] }];
+  for (const [i, c] of flat.entries()) {
+    const cur = sections[sections.length - 1];
+    const elapsed = c.start - cur.start;
+    const canCut = i > 0 && !isCueLine(c.text) && last - c.start >= SECTION_TAIL_SEC;
+    if (canCut && (elapsed >= SECTION_MIN_SEC && c.paraStart || elapsed >= SECTION_MAX_SEC)) {
+      sections.push({ start: c.start, chunks: [] });
+    }
+    sections[sections.length - 1].chunks.push({ text: c.text, start: c.start });
+  }
+  return sections;
+}
+function formatClock(sec) {
+  const s = Math.max(0, Math.floor(sec));
+  const h = Math.floor(s / 3600);
+  const mm = String(Math.floor(s % 3600 / 60)).padStart(2, "0");
+  const ss = String(s % 60).padStart(2, "0");
+  return h > 0 ? `${h}:${mm}:${ss}` : `${mm}:${ss}`;
+}
+function sectionHeading(s) {
+  var _a, _b;
+  const first = (_a = s.chunks.find((c) => !isCueLine(c.text))) != null ? _a : s.chunks[0];
+  const words = ((_b = first == null ? void 0 : first.text) != null ? _b : "").split(/\s+/).filter((w) => w !== "");
+  const head = words.slice(0, HEADING_WORDS).join(" ");
+  const more = words.length > HEADING_WORDS;
+  return `${formatClock(s.start)} ${more ? `${head.replace(/[,;:.!?\-–—]+$/, "")}\u2026` : head}`.trim();
+}
+
 // src/core/note/render.ts
 function formatTime(sec) {
   return sec.toFixed(2);
@@ -323,6 +432,9 @@ function escapeParagraph(text) {
   if (/^\d+[.)]/.test(s)) s = s.replace(/^(\d+)([.)])/, "$1\\$2");
   else if (/^[#>\-+*[<`~_=|]/.test(s)) s = `\\${s}`;
   return s;
+}
+function escapeHeading(text) {
+  return text.replace(/\s+/g, " ").trim().replace(/%(?=%)/g, "%\\").replace(/[#[\]]/g, "\\$&");
 }
 function renderParagraph(p) {
   return `${escapeParagraph(p.text)} %%rf:${formatTime(p.start)}%%`;
@@ -349,7 +461,9 @@ function renderNote(talk) {
     `tags: ${yamlList(["reading-feed", meta.source])}`,
     "---"
   );
-  const body = talk.paragraphs.filter((p) => p.text.trim() !== "").map(renderParagraph);
+  const body = segmentTalk(talk.paragraphs).map(
+    (sec) => [`## ${escapeHeading(sectionHeading(sec))}`, ...sec.chunks.map(renderParagraph)].join("\n\n")
+  );
   const footer = `---
 Source: [TED](<${meta.url}>) \xB7 CC BY-NC-ND 4.0`;
   return `${fm.join("\n")}
@@ -25192,7 +25306,7 @@ function createBar(player, path, a) {
     title.toggleClass("is-link", info.elsewhere);
     const n = target ? player.paragraphs.length : a.count();
     const cur = target ? Math.max(player.currentIndex + 1, 0) : 0;
-    meta.setText(`\u6BB5\u843D ${cur} / ${n} \xB7 ${player.speed}x`);
+    meta.setText(`${info.section ? `${info.section} \xB7 ` : ""}\u6BB5\u843D ${cur} / ${n} \xB7 ${player.speed}x`);
     snippet.setText(info.snippet);
     snippet.toggleClass("rf-hidden", info.snippet === "");
     prevNote.toggleClass("rf-disabled", !a.hasPrev());
@@ -25247,6 +25361,21 @@ function installReading(plugin, player, getSettings, saveSettings) {
       return v instanceof import_obsidian5.MarkdownView && ((_a = v.file) == null ? void 0 : _a.path) === path;
     });
   }
+  function unfoldSectionOf(view2, line) {
+    const head = sectionHeads(view2.file).filter((h) => h.position.start.line < line).pop();
+    if (!head) return false;
+    let done = false;
+    for (const h of Array.from(view2.containerEl.querySelectorAll("h2[data-heading]"))) {
+      if (h.getAttribute("data-heading") !== head.heading) continue;
+      const block = h.closest(".is-collapsed");
+      const icon = block == null ? void 0 : block.querySelector(".heading-collapse-indicator");
+      if (icon) {
+        icon.click();
+        done = true;
+      }
+    }
+    return done;
+  }
   function syncView(scroll) {
     const path = player.notePath;
     const active = player.paragraphs[player.currentIndex];
@@ -25255,6 +25384,10 @@ function installReading(plugin, player, getSettings, saveSettings) {
       const root = view2.containerEl;
       root.querySelectorAll(".rf-active").forEach((n) => n.removeClass("rf-active"));
       if (!active) continue;
+      if (unfoldSectionOf(view2, active.line)) {
+        window.setTimeout(() => syncView(scroll), 150);
+        continue;
+      }
       const target = root.querySelector(`[data-rf-idx="${player.currentIndex}"]`);
       target == null ? void 0 : target.addClass("rf-active");
       if (!scroll || !player.followActive) continue;
@@ -25323,6 +25456,16 @@ function installReading(plugin, player, getSettings, saveSettings) {
     const t = (_a = rfFm(file)) == null ? void 0 : _a["title"];
     return typeof t === "string" && t !== "" ? t : (_b = file == null ? void 0 : file.basename) != null ? _b : "";
   }
+  function sectionHeads(file) {
+    var _a, _b;
+    return (file ? (_b = (_a = app.metadataCache.getFileCache(file)) == null ? void 0 : _a.headings) != null ? _b : [] : []).filter((h) => h.level === 2);
+  }
+  function sectionLabel(file, line) {
+    const heads = sectionHeads(file);
+    if (heads.length === 0 || line === void 0) return "";
+    const n = heads.filter((h) => h.position.start.line < line).length;
+    return n > 0 ? `\u7B2C ${n} / ${heads.length} \u7BC0` : "";
+  }
   function jumpToPlaying(view2) {
     const file = fileAt(player.notePath);
     if (!file) return;
@@ -25368,11 +25511,16 @@ function installReading(plugin, player, getSettings, saveSettings) {
         return (_d = (_c = cache.get((_b = (_a = targetFile(view2)) == null ? void 0 : _a.path) != null ? _b : "")) == null ? void 0 : _c.times.length) != null ? _d : 0;
       },
       info: () => {
-        var _a, _b, _c;
+        var _a, _b, _c, _d;
         const f = targetFile(view2);
         const texts = f ? (_a = cache.get(f.path)) == null ? void 0 : _a.texts : void 0;
         const snippet = player.notePath !== null ? (_b = texts == null ? void 0 : texts[player.currentIndex]) != null ? _b : "" : "";
-        return { title: noteTitle(f), snippet, elsewhere: player.notePath !== null && player.notePath !== ((_c = view2.file) == null ? void 0 : _c.path) };
+        return {
+          title: noteTitle(f),
+          snippet,
+          section: player.notePath !== null ? sectionLabel(f, (_c = player.paragraphs[player.currentIndex]) == null ? void 0 : _c.line) : "",
+          elsewhere: player.notePath !== null && player.notePath !== ((_d = view2.file) == null ? void 0 : _d.path)
+        };
       },
       getPos: () => getSettings().dockPos[import_obsidian5.Platform.isMobile ? "mobile" : "desktop"],
       setPos: (p) => {
@@ -25455,6 +25603,20 @@ function installReading(plugin, player, getSettings, saveSettings) {
     });
     target.prepend(btn);
   }
+  function addSectionButton(h, path, info, idx) {
+    if (h.querySelector(":scope > .rf-play")) return;
+    const btn = createEl("button", { cls: ["rf-play", "rf-play-section"], text: "\u25B6", attr: { "aria-label": "\u5F9E\u9019\u4E00\u7BC0\u958B\u59CB\u64AD\u653E" } });
+    btn.addEventListener("click", (e) => {
+      var _a;
+      e.preventDefault();
+      e.stopPropagation();
+      const fresh = (_a = cache.get(path)) != null ? _a : info;
+      if (idx >= fresh.times.length) return;
+      player.load(path, fresh.audioUrl, fresh.times);
+      player.playFrom(idx);
+    });
+    h.append(btn);
+  }
   plugin.registerMarkdownPostProcessor(async (el, ctx) => {
     var _a;
     if (!readRfKey(ctx.frontmatter)) return;
@@ -25467,7 +25629,12 @@ function installReading(plugin, player, getSettings, saveSettings) {
     info.times.forEach((t, k) => {
       if (t.line >= sec.lineStart && t.line <= sec.lineEnd) hits.push(k);
     });
-    if (hits.length === 0) return;
+    if (hits.length === 0) {
+      const h = el.querySelector(":scope > h2");
+      const first = info.times.findIndex((t) => t.line > sec.lineEnd);
+      if (h && first >= 0) addSectionButton(h, file.path, info, first);
+      return;
+    }
     const items = Array.from(el.querySelectorAll(":scope > p, :scope li"));
     if (hits.length > 1 && items.length === hits.length) {
       hits.forEach((idx, i) => addPlayButton(items[i], file.path, info, idx));

@@ -19,6 +19,7 @@ v1 目標：**TED、只串流**。面板列出 TED 演講（標題、講者、�
 | V1-6c 沒有逐字稿的排除清單 | ✅ | 204 篇，見 LEDGER |
 | V1-7 第二輪回報（屬性區、▶ 跳段、執行期排除、懸浮圓鈕） | ✅ | 桌面已用 CDP 實機驗；手機待使用者測 |
 | V1-8 第三輪回報（卡片精簡、上／下一段跳過舞台提示） | ✅ | 已部署，桌面實機確認；手機待使用者測 |
+| V1-9 大段／小段（rf-schema 2） | ✅ | 已部署；桌面實機確認（收合、大綱、自動展開）；手機待使用者測 |
 
 ## V1-0 插件骨架（主 session 自己做）
 - [x] 照 `../obsidian-vocab-tracker` 的工具鏈：`package.json` scripts（typecheck → lint → test → build = `npm run check`）、
@@ -82,6 +83,13 @@ v1 目標：**TED、只串流**。面板列出 TED 演講（標題、講者、�
 - [x] 卡片拿掉狀態文字、×、收藏、「回到朗讀位置」大按鈕（後者移進「⋯」）；「⋯」移到下一篇右邊。
 - [x] 上／下一段跳過只有舞台提示的段落（METHOD §3.1；判決見 LEDGER）。
 - [x] 部署＋實機截圖（下一段：1 → 3 → 5，跳過 (Voice breaking)、(Applause)；上一段 5 → 3）。
+
+## V1-9 大段／小段（METHOD §1.1）
+- [x] talk 頁保留每個字幕行的時間（`Paragraph.cues`）。
+- [x] `src/core/note/segment.ts`：斷句、短句合併、時間內插、切大段、標題文字；`rf-schema: 2`。
+- [x] 閱讀模式：大段標題後 ▶、播到收起的大段自動展開、卡片顯示「第 n / N 節」。
+- [x] whisper 驗證小段時間（`pipeline/tools/ted_chunk_check.py`；結果見 LEDGER）。
+- [ ] 使用者在手機上確認收合與大綱。
 
 ## 之後（v1 不做）
 - BBC 6 Minute English：要先在 `pipeline/` 用 whisper 算時間戳並發布（設計見 METHOD §4）。

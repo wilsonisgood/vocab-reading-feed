@@ -18,4 +18,6 @@
   權重較高且讀 `--metadata-display-reading` → 改設變數（METHOD §3.1）。
 - 2026-10-14 **實機除錯**：`env -u ELECTRON_RUN_AS_NODE /Applications/Obsidian.app/Contents/MacOS/Obsidian --remote-debugging-port=9333`，
   再用 CDP（`/json/list` → WebSocket `Runtime.evaluate`、`Input.dispatchMouseEvent`、`Page.captureScreenshot`）操作與截圖。
+- 2026-10-14 **閱讀模式點收合箭頭展開後，段落 DOM 是稍後才畫出來的** → 展開後要延遲再加高亮／捲動（現在 150 ms）。
+- 2026-10-14 **用程式 `leaf.openFile()` 開 rf 筆記不會觸發自動閱讀模式**（只有使用者自己開才會）；CDP 測試要自己 `setViewState` 切到 preview。
 - 2026-10-14 **hls.js 自帶的型別需要 TS ≥ 5.7**（Uint8Array 泛型），本 repo 釘 TS 5.3.3 → 用 `src/services/player/hls-light.d.ts` 自寫最小型別；升級 TS 後可刪。

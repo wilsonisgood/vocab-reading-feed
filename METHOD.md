@@ -9,7 +9,7 @@
 rf-source: ted
 rf-id: paul_bloom_ai_and_the_end_of_loneliness
 rf-audio: https://hls.ted.com/project_masters/12009/index-f5-a1.m3u8
-rf-schema: 1
+rf-schema: 2
 title: AI and the end of loneliness
 speaker: Paul Bloom
 published: 2026-09-30
@@ -23,15 +23,23 @@ tags: [reading-feed, ted]
 rf-read: 2026-10-14          # 第一次播放任一段時由插件寫入（載入時沒有）
 ---
 
-I have a couple of questions for you -- but they're personal. So I'm not going to ask for a show of hands. %%rf:0.70%%
+## 00:00 I have a couple of questions for…
 
-My favorite description of loneliness comes from Zoë Heller's book "Notes on a Scandal." … %%rf:16.21%%
+I have a couple of questions for you -- but they're personal. %%rf:0.70%%
+
+So I'm not going to ask for a show of hands. %%rf:3.80%%
+
+…
+
+## 02:41 And so I think we should…
+
+…
 
 ---
 Source: [TED](<url>) · CC BY-NC-ND 4.0
 ```
 
-- **時間戳**：每段**結尾**加 `%%rf:<秒，兩位小數>%%`。Obsidian 的註解在閱讀模式看不到；
+- **時間戳**：每個小段**結尾**加 `%%rf:<秒，兩位小數>%%`。Obsidian 的註解在閱讀模式看不到；
   插件在 post-processor 裡用 `ctx.getSectionInfo(el)` 讀原始行，抓出這個註解。
   ⛔ 不用 block ID（`^xxx`）：Vocab Tracker 的段落討論用 block ID 當錨點，兩邊會打架。
 - 解析用的 regex：`/%%rf:(\d+(?:\.\d+)?)%%\s*$/`。沒有時間戳的段落 = 不能點播，但不影響其他段。
@@ -39,6 +47,8 @@ Source: [TED](<url>) · CC BY-NC-ND 4.0
 - `rf-read`：第一次播放這篇的任何一段時，插件用 `fileManager.processFrontMatter` 寫入當天日期（YYYY-MM-DD）；
   已存在就不動。瀏覽面板的「已讀」篩選看這個欄位（§3.4）。2026-10-14 使用者訂定（docs/feature/1014-report.md Q2）。
 - 重複載入：用 frontmatter `rf-source` + `rf-id` 判斷，已存在就跳過（列表上標示「已載入」）。
+- **版本**：`rf-schema: 2`（2026-10-14 起，加入大段／小段，§1.1）。`rf-schema: 1` 的舊筆記（一個 TED 原段落 = 一段、沒有標題）
+  插件照樣能播；不提供轉換（使用者訂定：舊的自己刪掉重新載入）。
 - `cover`／`thumbnail`：圖片**網址**（不下載圖檔），給筆記列表（例：Bases 卡片檢視的圖片屬性）用；
   TED 沒有圖時整行省略。2026-10-14 使用者要求加入。
 - 檔名：預設 `<資料夾>/TED/<published> <title>.md`；title 裡 `\/:*?"<>|#^[]` 換成空白（再壓連續空白、去頭尾）。
@@ -46,6 +56,22 @@ Source: [TED](<url>) · CC BY-NC-ND 4.0
   行首 `# > - + * [ < ` ~ _ = |` 前加 `\`，行首 `1.`／`1)` → `1\.`／`1\)`；
   後面緊接 `%` 的 `%` 換成 `%\`（`%%` → `%\%`，閱讀模式仍顯示 `%%`）。文字為空的段落不輸出。
 - YAML 純量含 `:`、`#`、引號等特殊字元就加雙引號（所以網址欄位會是 `"https://…"`，合法 YAML）。
+
+### 1.1 大段與小段（rf-schema 2；2026-10-14 使用者訂定）
+- **小段** = 一般段落，每段一個時間戳（有 ▶、會高亮）。把 TED 的原段落按句子切開：
+  - 斷句：`.` `?` `!`（可接右引號／括號）＋空白，且下一個字元是大寫、數字、左引號或左括號；
+    `Mr.` `Dr.` `St.` `vs.` `e.g.` 等縮寫、單一大寫字母（`J.`）、`U.S.` 這類不斷。
+  - 一句 **≤ 8 個字**就接到下一句；最後剩下的短句接到前一個小段。小段不跨 TED 原段落。
+  - 時間：TED 原段落的第一個小段 = 第一個字幕行的 time；其他小段 = 句首所在字幕行的 time，
+    依句首在該行的字元位置往下一行的 time **線性內插**（最後一行的結束 = 下一個 TED 段落開頭，沒有就 +3 s）。
+    實測誤差見 LEDGER（驗證工具 `pipeline/tools/ted_chunk_check.py`）。
+- **大段** = `## <時鐘> <該段第一個非舞台提示小段的前 7 個字>…`（時鐘 `mm:ss`，超過一小時 `h:mm:ss`）。
+  標題行沒有時間戳。Obsidian 原生的標題收合與大綱就用這個。
+  - 切點：距本大段開頭 ≥ **150 s** 後的第一個 TED 原段落開頭；拖到 **180 s** 還沒有就在任何小段切。
+    ⛔ 不在只有舞台提示的小段（`(Applause)`）切；離全文最後一個小段 < 45 s 不再切（避免尾巴一小節）。
+  - 第一個大段從 00:00（第一個小段）開始，所以大綱從頭到尾都有。
+- 閱讀模式：大段標題後面也有 ▶（從該段第一個小段播；放後面是因為標題前是收合箭頭的位置）；播放進到被收起的大段時自動展開；
+  懸浮卡片顯示「第 n / N 節」。
 
 ## 2. TED：怎麼抓
 
@@ -71,6 +97,7 @@ POST https://www.ted.com/graphql   content-type: application/json
 - 段落：`props.pageProps.transcriptData.translation.paragraphs[]`；一個 paragraph = 一段，
   文字 = 各 cue 的 `text` 以空白串接（cue 內的換行也換成空白、連續空白壓成一個）。
 - 段落開始時間 = 第一個 cue 的 `time`（毫秒 → 秒），再依 §2.4 處理片頭偏移。
+- 每個 cue（字幕行，約 3 s）的 `text` 與 `time` 也保留（`Paragraph.cues`），給 §1.1 算小段時間。
 - 中繼資料：`props.pageProps.videoData` 的 `title`、`presenterDisplayName`、`publishedAt`、`duration`、`topics.nodes[].name`。
 - 沒有英文 transcript（`transcriptData` 為 null 或 paragraphs 為空）→ `NoTranscriptError`；列表無法預先標示（見 §2.1）。
 

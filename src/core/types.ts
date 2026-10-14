@@ -29,10 +29,18 @@ export interface TalkMeta extends TalkSummary {
   license: string;
 }
 
+/** One subtitle line of a TED paragraph: text plus start time in seconds (METHOD §2.2). */
+export interface Cue {
+  text: string;
+  start: number;
+}
+
 /** One paragraph as loaded from the source: text plus start time in seconds (METHOD §2.2, §2.4). */
 export interface Paragraph {
   text: string;
   start: number;
+  /** Subtitle lines with their own times; lets sentences get their own timestamps (METHOD §1.1). */
+  cues?: Cue[];
 }
 
 /** A fully fetched talk, ready to become a note (METHOD §1). */
@@ -52,7 +60,7 @@ export interface ParagraphTime {
 }
 
 /** Bumped when the md contract in METHOD §1 changes incompatibly. */
-export const RF_SCHEMA = 1;
+export const RF_SCHEMA = 2;
 
 export const TED_LICENSE = "CC BY-NC-ND 4.0 — TED Conferences, LLC";
 
