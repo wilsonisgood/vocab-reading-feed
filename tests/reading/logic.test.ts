@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { cardSide, clampDock, neighborNote, sortNotes, todayString } from "../../src/ui/reading/logic";
+import { afterEndNote, cardSide, clampDock, neighborNote, sortNotes, todayString } from "../../src/ui/reading/logic";
 
 const n = (name: string, published: unknown) => ({ path: `d/${name}`, name, published });
 
@@ -18,6 +18,23 @@ describe("sortNotes / neighborNote", () => {
   it("accepts Date values", () => {
     const r = sortNotes([n("o.md", "2020-01-01"), n("d.md", new Date("2021-01-01T00:00:00Z"))]);
     expect(r[0].name).toBe("d.md");
+  });
+});
+
+describe("afterEndNote", () => {
+  const items = [n("b.md", "2024-01-02"), n("a.md", "2024-01-02"), n("c.md", "2025-05-05")];
+  it("next plays the older note and stops at the end", () => {
+    expect(afterEndNote(items, "d/c.md", "next")?.name).toBe("a.md");
+    expect(afterEndNote(items, "d/b.md", "next")).toBeNull();
+  });
+  it("loopAll wraps from the last to the first", () => {
+    expect(afterEndNote(items, "d/a.md", "loopAll")?.name).toBe("b.md");
+    expect(afterEndNote(items, "d/b.md", "loopAll")?.name).toBe("c.md");
+  });
+  it("repeatOne replays, stop and unknown paths give null", () => {
+    expect(afterEndNote(items, "d/a.md", "repeatOne")?.name).toBe("a.md");
+    expect(afterEndNote(items, "d/a.md", "stop")).toBeNull();
+    expect(afterEndNote(items, "d/nope.md", "loopAll")).toBeNull();
   });
 });
 

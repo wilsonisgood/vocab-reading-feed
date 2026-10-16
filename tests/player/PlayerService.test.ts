@@ -29,6 +29,10 @@ class FakeAudio implements AudioLike {
   removeEventListener(t: string, cb: () => void) {
     this.h.get(t)?.delete(cb);
   }
+  end() {
+    this.paused = true;
+    this.h.get("ended")?.forEach((cb) => cb());
+  }
   tick(t: number) {
     this.currentTime = t;
     this.h.get("timeupdate")?.forEach((cb) => cb());
@@ -171,6 +175,19 @@ describe("PlayerService", () => {
     p.on("started", cb);
     p.load("a.md", "https://x/a.m3u8", times);
     p.playFrom(0);
+    expect(cb).toHaveBeenCalledTimes(1);
+  });
+
+  it("emits ended when the track finishes, not after stop", () => {
+    const { audio, p } = make("toEnd");
+    const cb = vi.fn();
+    p.on("ended", cb);
+    p.load("a.md", "https://x/a.m3u8", times);
+    p.playFrom(0);
+    audio.end();
+    expect(cb).toHaveBeenCalledTimes(1);
+    p.stop();
+    audio.end();
     expect(cb).toHaveBeenCalledTimes(1);
   });
 });

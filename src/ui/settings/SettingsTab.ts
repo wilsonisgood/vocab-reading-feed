@@ -1,6 +1,6 @@
 // Settings tab (V1-3): folder, default speed, default ▶ mode, follow-scroll.
 import { PluginSettingTab, Setting, type App, type Plugin } from "obsidian";
-import type { PlayMode, ReadingFeedSettings } from "../../core/types";
+import type { AfterEnd, PlayMode, ReadingFeedSettings } from "../../core/types";
 
 type Host = Plugin & { settings: ReadingFeedSettings; saveSettings(): Promise<void> };
 
@@ -39,6 +39,20 @@ export class ReadingFeedSettingTab extends PluginSettingTab {
         await this.host.saveSettings();
       });
     });
+
+    new Setting(containerEl)
+      .setName("播完一篇後")
+      .setDesc("鎖定畫面時也照這個設定接著播。")
+      .addDropdown((d) => {
+        d.addOption("next", "播下一篇")
+          .addOption("loopAll", "播下一篇，最後一篇播完回到第一篇")
+          .addOption("repeatOne", "重播這篇")
+          .addOption("stop", "停止");
+        d.setValue(s.afterEnd).onChange(async (v) => {
+          s.afterEnd = v as AfterEnd;
+          await this.host.saveSettings();
+        });
+      });
 
     new Setting(containerEl).setName("跟隨捲動").addToggle((t) =>
       t.setValue(s.followScroll).onChange(async (v) => {

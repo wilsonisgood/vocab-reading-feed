@@ -32,6 +32,7 @@ var DEFAULT_SETTINGS = {
   folder: "Reading Feed",
   defaultSpeed: 1,
   playMode: "toEnd",
+  afterEnd: "next",
   followScroll: true,
   autoReadingMode: true,
   favorites: [],
@@ -1144,6 +1145,13 @@ var ReadingFeedSettingTab = class extends import_obsidian3.PluginSettingTab {
         await this.host.saveSettings();
       });
     });
+    new import_obsidian3.Setting(containerEl).setName("\u64AD\u5B8C\u4E00\u7BC7\u5F8C").setDesc("\u9396\u5B9A\u756B\u9762\u6642\u4E5F\u7167\u9019\u500B\u8A2D\u5B9A\u63A5\u8457\u64AD\u3002").addDropdown((d) => {
+      d.addOption("next", "\u64AD\u4E0B\u4E00\u7BC7").addOption("loopAll", "\u64AD\u4E0B\u4E00\u7BC7\uFF0C\u6700\u5F8C\u4E00\u7BC7\u64AD\u5B8C\u56DE\u5230\u7B2C\u4E00\u7BC7").addOption("repeatOne", "\u91CD\u64AD\u9019\u7BC7").addOption("stop", "\u505C\u6B62");
+      d.setValue(s.afterEnd).onChange(async (v) => {
+        s.afterEnd = v;
+        await this.host.saveSettings();
+      });
+    });
     new import_obsidian3.Setting(containerEl).setName("\u8DDF\u96A8\u6372\u52D5").addToggle(
       (t) => t.setValue(s.followScroll).onChange(async (v) => {
         s.followScroll = v;
@@ -1225,10 +1233,15 @@ var PlayerService = class {
       index: /* @__PURE__ */ new Set(),
       state: /* @__PURE__ */ new Set(),
       follow: /* @__PURE__ */ new Set(),
-      started: /* @__PURE__ */ new Set()
+      started: /* @__PURE__ */ new Set(),
+      ended: /* @__PURE__ */ new Set()
     };
     this.onTime = () => this.handleTime();
     this.onPlayState = () => this.emit("state");
+    this.onEnded = () => {
+      this.emit("state");
+      if (this.path !== null) this.emit("ended");
+    };
     const s = deps.getSettings();
     this.rate = s.defaultSpeed;
     this.follow = { enabled: s.followScroll, suspended: false };
@@ -1236,7 +1249,7 @@ var PlayerService = class {
     this.audio.addEventListener("timeupdate", this.onTime);
     this.audio.addEventListener("play", this.onPlayState);
     this.audio.addEventListener("pause", this.onPlayState);
-    this.audio.addEventListener("ended", this.onPlayState);
+    this.audio.addEventListener("ended", this.onEnded);
   }
   get notePath() {
     return this.path;
@@ -1368,7 +1381,7 @@ var PlayerService = class {
     this.audio.removeEventListener("timeupdate", this.onTime);
     this.audio.removeEventListener("play", this.onPlayState);
     this.audio.removeEventListener("pause", this.onPlayState);
-    this.audio.removeEventListener("ended", this.onPlayState);
+    this.audio.removeEventListener("ended", this.onEnded);
     this.detach();
     this.path = null;
     for (const set of Object.values(this.listeners)) set.clear();
@@ -1419,7 +1432,7 @@ var PlayerService = class {
   }
 };
 
-// node_modules/hls.js/dist/hls.light.mjs
+// ../../../node_modules/hls.js/dist/hls.light.mjs
 var isFiniteNumber = Number.isFinite || function(value) {
   return typeof value === "number" && isFinite(value);
 };
@@ -25160,6 +25173,15 @@ function neighborNote(items, path, dir) {
   if (i < 0) return null;
   return (_a = sorted[i + dir]) != null ? _a : null;
 }
+function afterEndNote(items, path, mode) {
+  var _a;
+  const sorted = sortNotes(items);
+  const i = sorted.findIndex((n) => n.path === path);
+  if (i < 0 || mode === "stop") return null;
+  if (mode === "repeatOne") return sorted[i];
+  if (mode === "loopAll") return sorted[(i + 1) % sorted.length];
+  return (_a = sorted[i + 1]) != null ? _a : null;
+}
 function todayString(d = /* @__PURE__ */ new Date()) {
   const m = String(d.getMonth() + 1).padStart(2, "0");
   const day = String(d.getDate()).padStart(2, "0");
@@ -25443,6 +25465,63 @@ function installReading(plugin, player, getSettings, saveSettings) {
     startNote(target);
     void view2.leaf.openFile(target);
   }
+  function moveOn(from, target) {
+    const views = target === from ? [] : previewViews(from.path);
+    startNote(target);
+    for (const v of views) void v.leaf.openFile(target);
+  }
+  function skipPlaying(dir) {
+    const file = fileAt(player.notePath);
+    const n = file && neighborNote(siblings(file), file.path, dir);
+    const target = n ? fileAt(n.path) : null;
+    if (file && target) moveOn(file, target);
+  }
+  function onEnded() {
+    const s = getSettings();
+    if (s.playMode !== "toEnd") return;
+    const file = fileAt(player.notePath);
+    const n = file && afterEndNote(siblings(file), file.path, s.afterEnd);
+    const target = n ? fileAt(n.path) : null;
+    if (file && target) moveOn(file, target);
+  }
+  const media = typeof navigator !== "undefined" ? navigator.mediaSession : void 0;
+  let mediaPath = null;
+  function syncMediaSession() {
+    var _a, _b;
+    if (!media) return;
+    const file = fileAt(player.notePath);
+    if ((file == null ? void 0 : file.path) !== mediaPath) {
+      mediaPath = (_a = file == null ? void 0 : file.path) != null ? _a : null;
+      const fm = rfFm(file);
+      const cover = (_b = fm == null ? void 0 : fm["cover"]) != null ? _b : fm == null ? void 0 : fm["thumbnail"];
+      try {
+        media.metadata = file ? new MediaMetadata({
+          title: noteTitle(file),
+          artist: typeof (fm == null ? void 0 : fm["speaker"]) === "string" ? fm["speaker"] : "",
+          album: "Reading Feed",
+          artwork: typeof cover === "string" && cover !== "" ? [{ src: cover }] : []
+        }) : null;
+      } catch (e) {
+      }
+    }
+    media.playbackState = file ? player.playing ? "playing" : "paused" : "none";
+  }
+  const mediaActions = [
+    ["play", () => {
+      if (!player.playing) player.toggle();
+    }],
+    ["pause", () => {
+      if (player.playing) player.toggle();
+    }],
+    ["previoustrack", () => skipPlaying(-1)],
+    ["nexttrack", () => skipPlaying(1)]
+  ];
+  for (const [action, cb] of mediaActions) {
+    try {
+      media == null ? void 0 : media.setActionHandler(action, cb);
+    } catch (e) {
+    }
+  }
   function fileAt(path) {
     const f = path === null ? null : app.vault.getAbstractFileByPath(path);
     return f instanceof import_obsidian5.TFile ? f : null;
@@ -25691,10 +25770,19 @@ function installReading(plugin, player, getSettings, saveSettings) {
     player.on("started", markRead),
     player.on("state", () => {
       refreshBars();
-    })
+      syncMediaSession();
+    }),
+    player.on("ended", onEnded)
   ];
   plugin.register(() => {
     offs.forEach((off) => off());
+    for (const [action] of mediaActions) {
+      try {
+        media == null ? void 0 : media.setActionHandler(action, null);
+      } catch (e) {
+      }
+    }
+    if (media) media.metadata = null;
     bars.forEach((b) => b.bar.el.remove());
     bars.clear();
     app.workspace.getLeavesOfType("markdown").forEach((l) => l.view.containerEl.removeClass("rf-note"));

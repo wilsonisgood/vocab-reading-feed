@@ -27,8 +27,11 @@ export interface HlsHandle {
 /** Mount an HLS playlist on a media element via MSE; must attach synchronously (iOS-style gesture rules). */
 export type HlsAttacher = (audio: AudioLike, url: string, http: HttpPort) => HlsHandle | null;
 
-/** "started" fires each time play() is requested (UI de-duplicates for the read mark, METHOD §3.4). */
-export type PlayerEvent = "index" | "state" | "follow" | "started";
+/**
+ * "started" fires each time play() is requested (UI de-duplicates for the read mark, METHOD §3.4).
+ * "ended" fires when the track plays through to its end (UI decides what plays next, METHOD §3.1).
+ */
+export type PlayerEvent = "index" | "state" | "follow" | "started" | "ended";
 
 const HLS_MIME = "application/vnd.apple.mpegurl";
 
@@ -54,9 +57,14 @@ export class PlayerService {
     state: new Set(),
     follow: new Set(),
     started: new Set(),
+    ended: new Set(),
   };
   private readonly onTime = () => this.handleTime();
   private readonly onPlayState = () => this.emit("state");
+  private readonly onEnded = () => {
+    this.emit("state");
+    if (this.path !== null) this.emit("ended");
+  };
 
   constructor(private deps: PlayerDeps) {
     const s = deps.getSettings();
@@ -66,7 +74,7 @@ export class PlayerService {
     this.audio.addEventListener("timeupdate", this.onTime);
     this.audio.addEventListener("play", this.onPlayState);
     this.audio.addEventListener("pause", this.onPlayState);
-    this.audio.addEventListener("ended", this.onPlayState);
+    this.audio.addEventListener("ended", this.onEnded);
   }
 
   get notePath(): string | null {
@@ -217,7 +225,7 @@ export class PlayerService {
     this.audio.removeEventListener("timeupdate", this.onTime);
     this.audio.removeEventListener("play", this.onPlayState);
     this.audio.removeEventListener("pause", this.onPlayState);
-    this.audio.removeEventListener("ended", this.onPlayState);
+    this.audio.removeEventListener("ended", this.onEnded);
     this.detach();
     this.path = null;
     for (const set of Object.values(this.listeners)) set.clear();

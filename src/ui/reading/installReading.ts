@@ -7,7 +7,7 @@ import { PlayerService } from "../../services/player/PlayerService";
 import { attachHls } from "../../services/player/hlsAttach";
 import { loadedKey } from "../../core/browser/logic";
 import { createBar, type Bar, type BarActions } from "./bar";
-import { neighborNote, todayString, type NoteRef } from "./logic";
+import { afterEndNote, neighborNote, todayString, type NoteRef } from "./logic";
 
 interface NoteInfo {
   mtime: number;
@@ -158,6 +158,70 @@ export function installReading(
     if (!(target instanceof TFile)) return;
     startNote(target); // synchronous part first
     void view.leaf.openFile(target);
+  }
+
+  /** Start `target` and show it where `from` was showing, so follow-along keeps working. */
+  function moveOn(from: TFile, target: TFile): void {
+    const views = target === from ? [] : previewViews(from.path);
+    startNote(target); // synchronous part first
+    for (const v of views) void v.leaf.openFile(target);
+  }
+
+  /** Lock screen ⏮ / ⏭: previous / next note of the one in the player. */
+  function skipPlaying(dir: -1 | 1): void {
+    const file = fileAt(player.notePath);
+    const n = file && neighborNote(siblings(file), file.path, dir);
+    const target = n ? fileAt(n.path) : null;
+    if (file && target) moveOn(file, target);
+  }
+
+  /** Track finished: continue per `afterEnd` (METHOD §3.1). Runs in the ended event, so it also works while locked. */
+  function onEnded(): void {
+    const s = getSettings();
+    if (s.playMode !== "toEnd") return; // "only this paragraph" never chains on
+    const file = fileAt(player.notePath);
+    const n = file && afterEndNote(siblings(file), file.path, s.afterEnd);
+    const target = n ? fileAt(n.path) : null;
+    if (file && target) moveOn(file, target);
+  }
+
+  // Lock screen / Control Center: title, cover, ⏯ ⏮ ⏭ (METHOD §3.1).
+  const media = typeof navigator !== "undefined" ? navigator.mediaSession : undefined;
+  let mediaPath: string | null = null;
+  function syncMediaSession(): void {
+    if (!media) return;
+    const file = fileAt(player.notePath);
+    if (file?.path !== mediaPath) {
+      mediaPath = file?.path ?? null;
+      const fm = rfFm(file);
+      const cover = fm?.["cover"] ?? fm?.["thumbnail"];
+      try {
+        media.metadata = file
+          ? new MediaMetadata({
+              title: noteTitle(file),
+              artist: typeof fm?.["speaker"] === "string" ? fm["speaker"] : "",
+              album: "Reading Feed",
+              artwork: typeof cover === "string" && cover !== "" ? [{ src: cover }] : [],
+            })
+          : null;
+      } catch {
+        // MediaMetadata missing on this platform: the controls still work without it.
+      }
+    }
+    media.playbackState = file ? (player.playing ? "playing" : "paused") : "none";
+  }
+  const mediaActions: [MediaSessionAction, () => void][] = [
+    ["play", () => { if (!player.playing) player.toggle(); }],
+    ["pause", () => { if (player.playing) player.toggle(); }],
+    ["previoustrack", () => skipPlaying(-1)],
+    ["nexttrack", () => skipPlaying(1)],
+  ];
+  for (const [action, cb] of mediaActions) {
+    try {
+      media?.setActionHandler(action, cb);
+    } catch {
+      // Unsupported action on this platform.
+    }
   }
 
   function fileAt(path: string | null): TFile | null {
@@ -421,10 +485,20 @@ export function installReading(
     player.on("started", markRead),
     player.on("state", () => {
       refreshBars();
+      syncMediaSession();
     }),
+    player.on("ended", onEnded),
   ];
   plugin.register(() => {
     offs.forEach((off) => off());
+    for (const [action] of mediaActions) {
+      try {
+        media?.setActionHandler(action, null);
+      } catch {
+        // Unsupported action on this platform.
+      }
+    }
+    if (media) media.metadata = null;
     bars.forEach((b) => b.bar.el.remove());
     bars.clear();
     app.workspace.getLeavesOfType("markdown").forEach((l) => l.view.containerEl.removeClass("rf-note"));

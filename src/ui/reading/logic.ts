@@ -1,5 +1,5 @@
 // Pure helpers for the floating bar (METHOD §3.1, §3.4): no DOM, no obsidian.
-import type { DockPos } from "../../core/types";
+import type { AfterEnd, DockPos } from "../../core/types";
 
 export interface NoteRef {
   path: string;
@@ -29,6 +29,19 @@ export function neighborNote(items: readonly NoteRef[], path: string, dir: -1 | 
   const i = sorted.findIndex((n) => n.path === path);
   if (i < 0) return null;
   return sorted[i + dir] ?? null;
+}
+
+/**
+ * Note to play after `path` finishes (METHOD §3.1): next = the following (older) note, loopAll wraps to
+ * the first, repeatOne replays `path`; null = stop (also at the end of the list, or if `path` is absent).
+ */
+export function afterEndNote(items: readonly NoteRef[], path: string, mode: AfterEnd): NoteRef | null {
+  const sorted = sortNotes(items);
+  const i = sorted.findIndex((n) => n.path === path);
+  if (i < 0 || mode === "stop") return null;
+  if (mode === "repeatOne") return sorted[i];
+  if (mode === "loopAll") return sorted[(i + 1) % sorted.length];
+  return sorted[i + 1] ?? null;
 }
 
 /** Local-date YYYY-MM-DD for the `rf-read` mark (METHOD §1). */

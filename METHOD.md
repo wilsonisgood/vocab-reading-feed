@@ -143,6 +143,10 @@ POST https://www.ted.com/graphql   content-type: application/json
     只在 `parseTimestamps` 標 `cue`，`stepIndex` 跳過。往那個方向已經沒有內容段就留在原地。
   - 上／下一篇：同資料夾的 rf 筆記，依 `published` 新到舊排序（下一篇 = 較舊）；開啟該筆記並從頭播。
     iOS 要在點擊當下同步呼叫 `play()`（§3.2）：音源網址從 metadataCache 的 frontmatter 同步取得，時間戳表之後再補。
+- **播完一篇後**（設定 `afterEnd`，2026-10-17 加；預設「播下一篇」）：停止／播下一篇（同上一條的排序，最後一篇播完就停）／
+  播下一篇並循環（最後一篇接回第一篇）／重播這篇。在 `ended` 事件裡同步 `load` + `play`（同一個 audio 元素），
+  所以鎖定畫面時也會接著播；畫面上開著原筆記的分頁跟著換成下一篇。▶ 設成「只播這段」時不接續。
+- **鎖定畫面／控制中心**（Media Session）：標題、講者、封面；⏯、⏮／⏭ = 上／下一篇（作用在播放器裡的那篇）。
 - **自動閱讀模式**：開啟 rf 筆記時若不在閱讀模式就切過去（設定 `autoReadingMode`，預設開）。
 - **屬性區**：rf 筆記整塊隱藏（只靠插件加的 class + CSS，不改 md）。Obsidian 用
   `.markdown-preview-view.show-properties .metadata-container { display: var(--metadata-display-reading) }`，

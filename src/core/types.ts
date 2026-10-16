@@ -66,6 +66,9 @@ export const TED_LICENSE = "CC BY-NC-ND 4.0 — TED Conferences, LLC";
 
 export type PlayMode = "toEnd" | "paragraph";
 
+/** What happens when a note's audio reaches its end (METHOD §3.1). */
+export type AfterEnd = "stop" | "next" | "loopAll" | "repeatOne";
+
 export interface ReadingFeedSettings {
   /** Vault folder for loaded notes; TED notes go to `<folder>/TED/` (METHOD §1). */
   folder: string;
@@ -73,6 +76,8 @@ export interface ReadingFeedSettings {
   defaultSpeed: number;
   /** What ▶ does by default (METHOD §3.2). */
   playMode: PlayMode;
+  /** When a note finishes: stop, play the next note, same but wrap around, or repeat this note (METHOD §3.1). */
+  afterEnd: AfterEnd;
   /** Follow-scroll on by default (METHOD §3.3). */
   followScroll: boolean;
   /** Switch rf notes to reading mode when opened (METHOD §3.1). */
@@ -95,6 +100,7 @@ export const DEFAULT_SETTINGS: ReadingFeedSettings = {
   folder: "Reading Feed",
   defaultSpeed: 1,
   playMode: "toEnd",
+  afterEnd: "next",
   followScroll: true,
   autoReadingMode: true,
   favorites: [],
