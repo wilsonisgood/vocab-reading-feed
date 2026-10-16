@@ -77,6 +77,9 @@ export class PlayerService {
     this.audio.addEventListener("ended", this.onEnded);
   }
 
+  /** Last play() rejection (debug log for lock-screen controls; TODO). */
+  lastPlayError: string | null = null;
+
   get notePath(): string | null {
     return this.path;
   }
@@ -260,7 +263,11 @@ export class PlayerService {
     try {
       this.emit("started");
       const p = this.audio.play();
-      if (p && typeof p.catch === "function") p.catch(() => this.emit("state"));
+      if (p && typeof p.catch === "function")
+        p.catch((e: unknown) => {
+          this.lastPlayError = String(e);
+          this.emit("state");
+        });
     } catch {
       this.emit("state");
     }
