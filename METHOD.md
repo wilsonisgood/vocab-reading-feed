@@ -147,6 +147,7 @@ POST https://www.ted.com/graphql   content-type: application/json
   播下一篇並循環（最後一篇接回第一篇）／重播這篇。在 `ended` 事件裡同步 `load` + `play`（同一個 audio 元素），
   所以鎖定畫面時也會接著播；畫面上開著原筆記的分頁跟著換成下一篇。▶ 設成「只播這段」時不接續。
 - **鎖定畫面／控制中心**（Media Session）：標題、講者、封面；⏯、⏮／⏭ = 上／下一篇（作用在播放器裡的那篇）。
+  seekbackward／seekforward／seekto 明確設 null（不然 iOS 顯示 ±10 秒蓋掉 ⏮⏭），每次開播重新註冊。
 - **自動閱讀模式**：開啟 rf 筆記時若不在閱讀模式就切過去（設定 `autoReadingMode`，預設開）。
 - **屬性區**：rf 筆記整塊隱藏（只靠插件加的 class + CSS，不改 md）。Obsidian 用
   `.markdown-preview-view.show-properties .metadata-container { display: var(--metadata-display-reading) }`，

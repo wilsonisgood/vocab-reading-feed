@@ -216,13 +216,26 @@ export function installReading(
     ["previoustrack", () => skipPlaying(-1)],
     ["nexttrack", () => skipPlaying(1)],
   ];
-  for (const [action, cb] of mediaActions) {
-    try {
-      media?.setActionHandler(action, cb);
-    } catch {
-      // Unsupported action on this platform.
+  // iOS shows its own ±skip buttons over ⏮ ⏭ unless the seek actions are explicitly cleared.
+  const clearedActions: MediaSessionAction[] = ["seekbackward", "seekforward", "seekto"];
+  /** (Re)register on every play: iOS may drop the handlers when a new source loads. */
+  function bindMediaActions(): void {
+    for (const action of clearedActions) {
+      try {
+        media?.setActionHandler(action, null);
+      } catch {
+        // Unsupported action on this platform.
+      }
+    }
+    for (const [action, cb] of mediaActions) {
+      try {
+        media?.setActionHandler(action, cb);
+      } catch {
+        // Unsupported action on this platform.
+      }
     }
   }
+  bindMediaActions();
 
   function fileAt(path: string | null): TFile | null {
     const f = path === null ? null : app.vault.getAbstractFileByPath(path);
@@ -483,6 +496,7 @@ export function installReading(
       bars.forEach((b) => b.bar.update());
     }),
     player.on("started", markRead),
+    player.on("started", bindMediaActions),
     player.on("state", () => {
       refreshBars();
       syncMediaSession();

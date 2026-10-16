@@ -25516,12 +25516,22 @@ function installReading(plugin, player, getSettings, saveSettings) {
     ["previoustrack", () => skipPlaying(-1)],
     ["nexttrack", () => skipPlaying(1)]
   ];
-  for (const [action, cb] of mediaActions) {
-    try {
-      media == null ? void 0 : media.setActionHandler(action, cb);
-    } catch (e) {
+  const clearedActions = ["seekbackward", "seekforward", "seekto"];
+  function bindMediaActions() {
+    for (const action of clearedActions) {
+      try {
+        media == null ? void 0 : media.setActionHandler(action, null);
+      } catch (e) {
+      }
+    }
+    for (const [action, cb] of mediaActions) {
+      try {
+        media == null ? void 0 : media.setActionHandler(action, cb);
+      } catch (e) {
+      }
     }
   }
+  bindMediaActions();
   function fileAt(path) {
     const f = path === null ? null : app.vault.getAbstractFileByPath(path);
     return f instanceof import_obsidian5.TFile ? f : null;
@@ -25768,6 +25778,7 @@ function installReading(plugin, player, getSettings, saveSettings) {
       bars.forEach((b) => b.bar.update());
     }),
     player.on("started", markRead),
+    player.on("started", bindMediaActions),
     player.on("state", () => {
       refreshBars();
       syncMediaSession();
