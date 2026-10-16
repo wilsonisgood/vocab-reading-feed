@@ -1432,7 +1432,7 @@ var PlayerService = class {
   }
 };
 
-// ../../../node_modules/hls.js/dist/hls.light.mjs
+// node_modules/hls.js/dist/hls.light.mjs
 var isFiniteNumber = Number.isFinite || function(value) {
   return typeof value === "number" && isFinite(value);
 };
