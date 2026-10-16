@@ -1,5 +1,5 @@
 // Reading-mode glue (METHOD §3): ▶ per paragraph, playback bar, follow-scroll.
-import { MarkdownView, Notice, Platform, TFile, type App, type HeadingCache, type Plugin, type MarkdownPostProcessorContext } from "obsidian";
+import { MarkdownView, Platform, TFile, type App, type HeadingCache, type Plugin, type MarkdownPostProcessorContext } from "obsidian";
 import type { HttpPort } from "../../core/ports";
 import { RF_READ_KEY, type ParagraphTime, type ReadingFeedSettings } from "../../core/types";
 import { parseTimestamps, readRfKey, timestampTexts } from "../../core/note/parse";
@@ -167,30 +167,12 @@ export function installReading(
     for (const v of views) void v.leaf.openFile(target);
   }
 
-  // Debug log for lock-screen controls (temporary; TODO): what fired and what it did.
-  const mediaLog: string[] = [];
-  function logMedia(msg: string): void {
-    const t = new Date().toTimeString().slice(0, 8);
-    mediaLog.push(`${t} ${msg}`);
-    if (mediaLog.length > 30) mediaLog.shift();
-  }
-  plugin.addCommand({
-    id: "media-debug-log",
-    name: "鎖定畫面除錯紀錄",
-    callback: () => new Notice(mediaLog.length ? mediaLog.join("\n") : "（沒有紀錄）", 0),
-  });
-
-  /** Lock screen ⏮ / ⏭: previous / next note of the one in the player. */
+  /** Lock screen ⏮ / ⏭: previous / next note of the one in the player, wrapping at the ends. */
   function skipPlaying(dir: -1 | 1): void {
     const file = fileAt(player.notePath);
-    const n = file && neighborNote(siblings(file), file.path, dir);
+    const n = file && neighborNote(siblings(file), file.path, dir, true);
     const target = n ? fileAt(n.path) : null;
-    logMedia(`${dir < 0 ? "⏮" : "⏭"} 收到；目前=${file?.basename ?? "無"}；目標=${target?.basename ?? "無"}`);
     if (file && target) moveOn(file, target);
-    logMedia(`  → 播放中=${player.notePath ?? "無"}；playing=${player.playing}`);
-    window.setTimeout(() => {
-      logMedia(`  3 秒後 playing=${player.playing}；錯誤=${player.lastPlayError ?? "無"}`);
-    }, 3000);
   }
 
   /** Track finished: continue per `afterEnd` (METHOD §3.1). Runs in the ended event, so it also works while locked. */
@@ -200,7 +182,6 @@ export function installReading(
     const file = fileAt(player.notePath);
     const n = file && afterEndNote(siblings(file), file.path, s.afterEnd);
     const target = n ? fileAt(n.path) : null;
-    logMedia(`播完；接著=${target?.basename ?? "無"}`);
     if (file && target) moveOn(file, target);
   }
 
@@ -230,8 +211,8 @@ export function installReading(
     media.playbackState = file ? (player.playing ? "playing" : "paused") : "none";
   }
   const mediaActions: [MediaSessionAction, () => void][] = [
-    ["play", () => { logMedia("⏯ play"); if (!player.playing) player.toggle(); }],
-    ["pause", () => { logMedia("⏯ pause"); if (player.playing) player.toggle(); }],
+    ["play", () => { if (!player.playing) player.toggle(); }],
+    ["pause", () => { if (player.playing) player.toggle(); }],
     ["previoustrack", () => skipPlaying(-1)],
     ["nexttrack", () => skipPlaying(1)],
   ];
@@ -246,15 +227,13 @@ export function installReading(
         // Unsupported action on this platform.
       }
     }
-    const failed: string[] = [];
     for (const [action, cb] of mediaActions) {
       try {
         media?.setActionHandler(action, cb);
       } catch {
-        failed.push(action); // Unsupported action on this platform.
+        // Unsupported action on this platform.
       }
     }
-    logMedia(`註冊 handler：mediaSession=${media ? "有" : "無"}；失敗=${failed.join(",") || "無"}`);
   }
   bindMediaActions();
 

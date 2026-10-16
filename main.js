@@ -1242,8 +1242,6 @@ var PlayerService = class {
       this.emit("state");
       if (this.path !== null) this.emit("ended");
     };
-    /** Last play() rejection (debug log for lock-screen controls; TODO). */
-    this.lastPlayError = null;
     const s = deps.getSettings();
     this.rate = s.defaultSpeed;
     this.follow = { enabled: s.followScroll, suspended: false };
@@ -1413,11 +1411,7 @@ var PlayerService = class {
     try {
       this.emit("started");
       const p = this.audio.play();
-      if (p && typeof p.catch === "function")
-        p.catch((e) => {
-          this.lastPlayError = String(e);
-          this.emit("state");
-        });
+      if (p && typeof p.catch === "function") p.catch(() => this.emit("state"));
     } catch (e) {
       this.emit("state");
     }
@@ -25172,11 +25166,12 @@ function sortNotes(items) {
     return a.name < b.name ? -1 : a.name > b.name ? 1 : 0;
   });
 }
-function neighborNote(items, path, dir) {
+function neighborNote(items, path, dir, wrap = false) {
   var _a;
   const sorted = sortNotes(items);
   const i = sorted.findIndex((n) => n.path === path);
   if (i < 0) return null;
+  if (wrap) return sorted[(i + dir + sorted.length) % sorted.length];
   return (_a = sorted[i + dir]) != null ? _a : null;
 }
 function afterEndNote(items, path, mode) {
@@ -25476,38 +25471,18 @@ function installReading(plugin, player, getSettings, saveSettings) {
     startNote(target);
     for (const v of views) void v.leaf.openFile(target);
   }
-  const mediaLog = [];
-  function logMedia(msg) {
-    const t = (/* @__PURE__ */ new Date()).toTimeString().slice(0, 8);
-    mediaLog.push(`${t} ${msg}`);
-    if (mediaLog.length > 30) mediaLog.shift();
-  }
-  plugin.addCommand({
-    id: "media-debug-log",
-    name: "\u9396\u5B9A\u756B\u9762\u9664\u932F\u7D00\u9304",
-    callback: () => new import_obsidian5.Notice(mediaLog.length ? mediaLog.join("\n") : "\uFF08\u6C92\u6709\u7D00\u9304\uFF09", 0)
-  });
   function skipPlaying(dir) {
-    var _a, _b, _c;
     const file = fileAt(player.notePath);
-    const n = file && neighborNote(siblings(file), file.path, dir);
+    const n = file && neighborNote(siblings(file), file.path, dir, true);
     const target = n ? fileAt(n.path) : null;
-    logMedia(`${dir < 0 ? "\u23EE" : "\u23ED"} \u6536\u5230\uFF1B\u76EE\u524D=${(_a = file == null ? void 0 : file.basename) != null ? _a : "\u7121"}\uFF1B\u76EE\u6A19=${(_b = target == null ? void 0 : target.basename) != null ? _b : "\u7121"}`);
     if (file && target) moveOn(file, target);
-    logMedia(`  \u2192 \u64AD\u653E\u4E2D=${(_c = player.notePath) != null ? _c : "\u7121"}\uFF1Bplaying=${player.playing}`);
-    window.setTimeout(() => {
-      var _a2;
-      logMedia(`  3 \u79D2\u5F8C playing=${player.playing}\uFF1B\u932F\u8AA4=${(_a2 = player.lastPlayError) != null ? _a2 : "\u7121"}`);
-    }, 3e3);
   }
   function onEnded() {
-    var _a;
     const s = getSettings();
     if (s.playMode !== "toEnd") return;
     const file = fileAt(player.notePath);
     const n = file && afterEndNote(siblings(file), file.path, s.afterEnd);
     const target = n ? fileAt(n.path) : null;
-    logMedia(`\u64AD\u5B8C\uFF1B\u63A5\u8457=${(_a = target == null ? void 0 : target.basename) != null ? _a : "\u7121"}`);
     if (file && target) moveOn(file, target);
   }
   const media = typeof navigator !== "undefined" ? navigator.mediaSession : void 0;
@@ -25534,11 +25509,9 @@ function installReading(plugin, player, getSettings, saveSettings) {
   }
   const mediaActions = [
     ["play", () => {
-      logMedia("\u23EF play");
       if (!player.playing) player.toggle();
     }],
     ["pause", () => {
-      logMedia("\u23EF pause");
       if (player.playing) player.toggle();
     }],
     ["previoustrack", () => skipPlaying(-1)],
@@ -25552,15 +25525,12 @@ function installReading(plugin, player, getSettings, saveSettings) {
       } catch (e) {
       }
     }
-    const failed = [];
     for (const [action, cb] of mediaActions) {
       try {
         media == null ? void 0 : media.setActionHandler(action, cb);
       } catch (e) {
-        failed.push(action);
       }
     }
-    logMedia(`\u8A3B\u518A handler\uFF1AmediaSession=${media ? "\u6709" : "\u7121"}\uFF1B\u5931\u6557=${failed.join(",") || "\u7121"}`);
   }
   bindMediaActions();
   function fileAt(path) {

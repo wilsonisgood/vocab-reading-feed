@@ -15,6 +15,13 @@ describe("sortNotes / neighborNote", () => {
     expect(neighborNote(items, "d/z.md", 1)).toBeNull();
     expect(neighborNote(items, "d/nope.md", 1)).toBeNull();
   });
+  it("wrap goes round at the ends", () => {
+    expect(neighborNote(items, "d/z.md", 1, true)?.name).toBe("c.md");
+    expect(neighborNote(items, "d/c.md", -1, true)?.name).toBe("z.md");
+    expect(neighborNote(items, "d/a.md", 1, true)?.name).toBe("b.md");
+    expect(neighborNote([n("o.md", "2020-01-01")], "d/o.md", 1, true)?.name).toBe("o.md");
+    expect(neighborNote(items, "d/nope.md", 1, true)).toBeNull();
+  });
   it("accepts Date values", () => {
     const r = sortNotes([n("o.md", "2020-01-01"), n("d.md", new Date("2021-01-01T00:00:00Z"))]);
     expect(r[0].name).toBe("d.md");

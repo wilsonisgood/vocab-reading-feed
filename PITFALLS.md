@@ -22,4 +22,4 @@
 - 2026-10-14 **用程式 `leaf.openFile()` 開 rf 筆記不會觸發自動閱讀模式**（只有使用者自己開才會）；CDP 測試要自己 `setViewState` 切到 preview。
 - 2026-10-14 **hls.js 自帶的型別需要 TS ≥ 5.7**（Uint8Array 泛型），本 repo 釘 TS 5.3.3 → 用 `src/services/player/hls-light.d.ts` 自寫最小型別；升級 TS 後可刪。
 - 2026-10-17 **iOS 鎖定畫面只出現 ±10 秒、沒有 ⏮⏭**：已設 nexttrack／previoustrack 仍被系統預設的 skip 鈕蓋掉
-  → 明確 `setActionHandler("seekforward"/"seekbackward"/"seekto", null)`，並在每次開播重新註冊（待實機確認）。
+  → 明確 `setActionHandler("seekforward"/"seekbackward"/"seekto", null)`，並在每次開播重新註冊（iPhone 實機確認有效）。

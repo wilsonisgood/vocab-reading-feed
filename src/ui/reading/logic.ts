@@ -23,11 +23,15 @@ export function sortNotes(items: readonly NoteRef[]): NoteRef[] {
   });
 }
 
-/** prev = newer (-1), next = older (+1) in the sorted list; null at the ends or if `path` is absent. */
-export function neighborNote(items: readonly NoteRef[], path: string, dir: -1 | 1): NoteRef | null {
+/**
+ * prev = newer (-1), next = older (+1) in the sorted list; null if `path` is absent, and at the ends
+ * unless `wrap` (then it goes round: oldest ⏭ → newest, newest ⏮ → oldest).
+ */
+export function neighborNote(items: readonly NoteRef[], path: string, dir: -1 | 1, wrap = false): NoteRef | null {
   const sorted = sortNotes(items);
   const i = sorted.findIndex((n) => n.path === path);
   if (i < 0) return null;
+  if (wrap) return sorted[(i + dir + sorted.length) % sorted.length];
   return sorted[i + dir] ?? null;
 }
 
