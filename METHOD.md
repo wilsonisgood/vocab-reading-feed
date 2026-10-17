@@ -73,6 +73,44 @@ Source: [TED](<url>) · CC BY-NC-ND 4.0
 - 閱讀模式：大段標題後面也有 ▶（從該段第一個小段播；放後面是因為標題前是收合箭頭的位置）；播放進到被收起的大段時自動展開；
   懸浮卡片顯示「第 n / N 節」。
 
+### 1.2 書（rf-source: book；2026-10-17 使用者訂定）
+使用者自己的 epub 用 TTS 念成 m4a、放在使用者私人的儲存空間；md 由使用者自己的工具（`private-podcast/tools/export_md.py`，
+不在本 repo）產生、自己放進 vault。插件只負責**讀得懂、播得了**，不產生、不下載書的筆記。
+
+```markdown
+---
+rf-source: book
+rf-id: androids-ch17            # <書 slug>-<章 id>
+rf-audio: "https://<worker>/<secret>/androids/ch17.m4a"   # 直接的音檔，不是 m3u8
+rf-schema: 2
+title: SEVENTEEN
+book: "Do Androids Dream of Electric Sheep?"
+author: Philip K. Dick
+episode: 17
+duration: 720
+license: "私人收聽：使用者自己的 epub，不公開"
+tags: [reading-feed, book]
+---
+
+## 00:00 Afterward they enjoyed a great luxury: Rick…
+
+Afterward they enjoyed a great luxury: Rick had room service bring up coffee. %%rf:0.80%%
+
+…
+
+---
+Source: 《書名》 作者 · 私人收聽，不公開 · [[16 SIXTEEN|← 上一章]] · [[18 EIGHTEEN|下一章 →]]
+```
+- 時間戳、大段／小段、跳脫規則同 §1／§1.1；只是時間來自 TTS（每個小段念出的起點），不是字幕。
+- 檔名 `<書名資料夾>/<兩位集數> <章名>.md`（例：`17 SEVENTEEN.md`）；一本書一個資料夾。
+  沒有 `published` → 上／下一篇、播完接下一篇依**檔名**排序（數字照數值比，`100` 在 `99` 後）= 依章節順序（§3.1）。
+- `rf-audio` 是直接的音檔網址（`.m4a`／`.mp3`／`.mp4`；伺服器要支援 Range／206 才能拖曳）→ 所有平台直接設 `audio.src`，不走 hls.js（§3.1）。
+  ⛔ repo 裡（測試 fixture、文件）不寫真的網址或 secret，一律用 `https://audio.example.test/…`。
+- 鎖定畫面：artist = `author`、album = `book`（TED 是 `speaker`、"Reading Feed"）。書沒有 `cover` 就不顯示封面。
+- **憲法 2（出處與授權）對書的解讀**：使用者自己的書、只在自己的 vault、不散布 → 結尾 Source 行附書名與作者、`license` 註明私人收聽即可。
+- TED 專屬的不適用：瀏覽面板（列表、載入、狀態篩選、收藏）只列 TED；§2 的抓取與片頭偏移與書無關。
+  `rf-source` + `rf-id` 照樣是唯一鍵（`book:androids-ch17`），不會跟 TED 撞。
+
 ## 2. TED：怎麼抓
 
 ### 2.1 列表（GraphQL，用 Obsidian 的 `requestUrl`，不受 CORS 限制）
@@ -124,7 +162,8 @@ POST https://www.ted.com/graphql   content-type: application/json
 
 ### 3.1 播放器
 - 整個插件只有**一個** `HTMLAudioElement`，一次只播一篇。
-- 能不能原生播 HLS：`audio.canPlayType("application/vnd.apple.mpegurl")` 非空（iPhone／iPad）→ 直接設 `src`；
+- 網址路徑（不含 query／fragment）不是 `.m3u8` → 直接的音檔（書，§1.2），**所有平台**直接設 `src`（`core/audio.ts` 的 `isHlsUrl`）。
+- 是 HLS 時，能不能原生播：`audio.canPlayType("application/vnd.apple.mpegurl")` 非空（iPhone／iPad）→ 直接設 `src`；
   否則（桌面、Android）用 **hls.js**（`hls.light` 版）掛 MSE。hls.js 載入失敗時，改用以 `requestUrl`
   實作的自訂 loader 重試一次。
 - **懸浮播放器**（2026-10-14 使用者訂定；round 2 改成圓鈕＋卡片，取代整條膠囊列）：
@@ -141,12 +180,12 @@ POST https://www.ted.com/graphql   content-type: application/json
     **跳過只有舞台提示的段落**（整段只有括號，例 `(Applause)`、`(Laughter) (Music)`、`(Voice breaking)`；
     `(Laughter) So I…` 這種有內容的不算）。md 不動：這些段落照樣有 ▶、照樣有時間戳，播放經過時照樣高亮；
     只在 `parseTimestamps` 標 `cue`，`stepIndex` 跳過。往那個方向已經沒有內容段就留在原地。
-  - 上／下一篇：同資料夾的 rf 筆記，依 `published` 新到舊排序（下一篇 = 較舊）；開啟該筆記並從頭播。
+  - 上／下一篇：同資料夾的 rf 筆記，依 `published` 新到舊排序（下一篇 = 較舊；同一天或沒有 `published` 的依檔名，數字照數值比——書的章節就是這樣排，§1.2）；開啟該筆記並從頭播。
     iOS 要在點擊當下同步呼叫 `play()`（§3.2）：音源網址從 metadataCache 的 frontmatter 同步取得，時間戳表之後再補。
 - **播完一篇後**（設定 `afterEnd`，2026-10-17 加；預設「播下一篇」）：停止／播下一篇（同上一條的排序，最後一篇播完就停）／
   播下一篇並循環（最後一篇接回第一篇）／重播這篇。在 `ended` 事件裡同步 `load` + `play`（同一個 audio 元素），
   所以鎖定畫面時也會接著播；畫面上開著原筆記的分頁跟著換成下一篇。▶ 設成「只播這段」時不接續。
-- **鎖定畫面／控制中心**（Media Session）：標題、講者、封面；⏯、⏮／⏭ = 上／下一篇（作用在播放器裡的那篇；到頭尾繞回：最舊 ⏭ → 最新、最新 ⏮ → 最舊）。
+- **鎖定畫面／控制中心**（Media Session）：標題、講者、封面（書：作者、書名，§1.2）；⏯、⏮／⏭ = 上／下一篇（作用在播放器裡的那篇；到頭尾繞回：最舊 ⏭ → 最新、最新 ⏮ → 最舊）。
   seekbackward／seekforward／seekto 明確設 null（不然 iOS 顯示 ±10 秒蓋掉 ⏮⏭），每次開播重新註冊。
 - **自動閱讀模式**：開啟 rf 筆記時若不在閱讀模式就切過去（設定 `autoReadingMode`，預設開）。
 - **屬性區**：rf 筆記整塊隱藏（只靠插件加的 class + CSS，不改 md）。Obsidian 用

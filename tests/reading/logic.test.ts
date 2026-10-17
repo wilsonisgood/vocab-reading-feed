@@ -62,3 +62,16 @@ describe("dock position", () => {
     expect(cardSide({ x: 0.1, y: 0.9 })).toEqual({ left: false, up: true });
   });
 });
+
+describe("book chapters (no published)", () => {
+  const items = [n("18 EIGHTEEN.md", undefined), n("100 END.md", undefined), n("17 SEVENTEEN.md", undefined), n("99 X.md", undefined)];
+  it("next chapter = next file name, numeric", () => {
+    expect(sortNotes(items).map((x) => x.name)).toEqual(["17 SEVENTEEN.md", "18 EIGHTEEN.md", "99 X.md", "100 END.md"]);
+    expect(neighborNote(items, "d/17 SEVENTEEN.md", 1)?.name).toBe("18 EIGHTEEN.md");
+    expect(afterEndNote(items, "d/18 EIGHTEEN.md", "next")?.name).toBe("99 X.md");
+    expect(afterEndNote(items, "d/100 END.md", "loopAll")?.name).toBe("17 SEVENTEEN.md");
+    // Lock screen ⏮ ⏭ wrap: last chapter → first, first → last.
+    expect(neighborNote(items, "d/100 END.md", 1, true)?.name).toBe("17 SEVENTEEN.md");
+    expect(neighborNote(items, "d/17 SEVENTEEN.md", -1, true)?.name).toBe("100 END.md");
+  });
+});

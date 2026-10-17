@@ -2,6 +2,7 @@
 // element, hls.js) are injected so this runs in node tests with fakes.
 import type { ParagraphTime, ReadingFeedSettings } from "../../core/types";
 import type { HttpPort } from "../../core/ports";
+import { isHlsUrl } from "../../core/audio";
 import { findIndex, followReducer, shouldFollow, stepIndex, stopTimeFor, type FollowEvent, type FollowState } from "./logic";
 
 /** Minimal slice of HTMLAudioElement used here. */
@@ -116,7 +117,8 @@ export class PlayerService {
       this.stopAt = null;
       const s = this.deps.getSettings();
       this.follow = { enabled: s.followScroll, suspended: false };
-      if (this.audio.canPlayType(HLS_MIME) !== "") {
+      // Plain files (book m4a, METHOD §1.2) and native HLS (iOS) both go straight to src.
+      if (!isHlsUrl(audioUrl) || this.audio.canPlayType(HLS_MIME) !== "") {
         this.audio.src = audioUrl;
       } else {
         this.hls = this.deps.attachHls(this.audio, audioUrl, this.deps.http);

@@ -13,13 +13,17 @@ function pubKey(v: unknown): string {
   return typeof v === "string" ? v.slice(0, 10) : "";
 }
 
-/** Newest first by `published`; same day by file name; missing dates last. */
+/**
+ * Newest first by `published`; same day by file name; missing dates last.
+ * Book chapters have no `published`, so they come out in file-name order: `17 …` before `18 …` (METHOD §1.2).
+ * Names compare numerically, so `100 …` follows `99 …`.
+ */
 export function sortNotes(items: readonly NoteRef[]): NoteRef[] {
   return [...items].sort((a, b) => {
     const pa = pubKey(a.published);
     const pb = pubKey(b.published);
     if (pa !== pb) return pa === "" ? 1 : pb === "" ? -1 : pa < pb ? 1 : -1;
-    return a.name < b.name ? -1 : a.name > b.name ? 1 : 0;
+    return a.name.localeCompare(b.name, "en", { numeric: true });
   });
 }
 

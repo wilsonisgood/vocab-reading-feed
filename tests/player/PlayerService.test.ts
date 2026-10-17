@@ -71,6 +71,24 @@ describe("PlayerService", () => {
     expect(b.attachHls).toHaveBeenCalledTimes(1);
   });
 
+  it("plain files (book m4a) set src on every platform, never hls.js", () => {
+    for (const native of [true, false]) {
+      const a = make("toEnd", native);
+      a.p.load("b.md", "https://audio.example.test/s/ch17.m4a", times);
+      expect(a.audio.src).toBe("https://audio.example.test/s/ch17.m4a");
+      expect(a.attachHls).not.toHaveBeenCalled();
+    }
+  });
+
+  it("switching from a TED playlist to a book file drops hls.js", () => {
+    const { audio, p, attachHls, destroy } = make("toEnd", false);
+    p.load("t.md", "https://x/a.m3u8", times);
+    p.load("b.md", "https://audio.example.test/s/ch17.m4a", times);
+    expect(attachHls).toHaveBeenCalledTimes(1);
+    expect(destroy).toHaveBeenCalledTimes(1);
+    expect(audio.src).toBe("https://audio.example.test/s/ch17.m4a");
+  });
+
   it("playFrom seeks and calls play() synchronously", () => {
     const { audio, p } = make("toEnd");
     p.load("a.md", "u", times);
@@ -120,8 +138,8 @@ describe("PlayerService", () => {
 
   it("switching notes swaps source; stop clears", () => {
     const { audio, p, destroy } = make("toEnd", false);
-    p.load("a.md", "u1", times);
-    p.load("b.md", "u2", times);
+    p.load("a.md", "https://x/u1.m3u8", times);
+    p.load("b.md", "https://x/u2.m3u8", times);
     expect(destroy).toHaveBeenCalledTimes(1);
     expect(p.notePath).toBe("b.md");
     p.stop();

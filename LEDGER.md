@@ -11,7 +11,7 @@
 | 2026-10-14 | 大段／小段（rf-schema 2） | ✅ 採用：大段依時間 2.5–3 min、小段按句（≤ 8 字接下一句） | 使用者選定（A 依時間；C 用 AI 下標題要送全文給第三方，和憲法 1 衝突）。舊筆記不轉換，使用者自己刪掉重載 |
 | 2026-10-14 | 小段時間戳用字幕行內插準不準 | ✅ 跟 TED 自己的段首 cue 一樣準 | `ted_chunk_check.py`（whisper-large-v3-turbo 整篇）。Paul Bloom：內插 n=85 \|差\| 中位數 0.25 s、p90 0.61、最大 1.38；段首 cue n=16 中位數 0.32、p90 0.50。Blake Mycoskie：內插 n=63 中位數 0.46、p90 0.73、最大 1.02；段首 cue n=17 中位數 0.68、p90 0.91。whisper 詞首本來就偏早約 0.3 s（見 V1-1 列），不另加提前量 |
 | 2026-10-17 | iPhone 鎖定畫面 ⏮⏭ 切篇 | ✅ 可用 | 只出現 ±10 秒 → 把 seek 動作明確設 null 後換成 ⏮⏭。「按了沒反應」不是 iOS 問題，是在清單最後一篇按 ⏭（除錯紀錄確認）→ 鎖定畫面改成頭尾繞回；App 內的上／下一篇不變 |
-| 2026-10-14 | TED GraphQL 篩選（V1-1） | ❌ 不支援 | `videos` 只有 first/after/before/last/language/id；試過約 35 個參數名皆 Unknown argument；introspection 關閉 → 篩選在插件端 |
+| 2026-10-17 | 書的章節筆記（V1-10） | ✅ 擴充 §1（§1.2 `rf-source: book`），沿用 rf-schema 2 | 使用者同意。播放只看網址：路徑不是 `.m3u8` 就直接 `audio.src`（原本桌面一律掛 hls.js，m4a 會壞）。「下一篇」排序本來就是「沒 `published` → 依檔名」，對章節成立，只把檔名比較改成數值序（`100` 在 `99` 後）。收藏只在 TED 瀏覽面板，書不適用 || 2026-10-14 | TED GraphQL 篩選（V1-1） | ❌ 不支援 | `videos` 只有 first/after/before/last/language/id；試過約 35 個參數名皆 Unknown argument；introspection 關閉 → 篩選在插件端 |
 
 ## 2. 已關閉方向
 

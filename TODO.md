@@ -21,7 +21,7 @@ v1 目標：**TED、只串流**。面板列出 TED 演講（標題、講者、�
 | V1-8 第三輪回報（卡片精簡、上／下一段跳過舞台提示） | ✅ | 已部署，桌面實機確認；手機待使用者測 |
 | V1-9 大段／小段（rf-schema 2） | ✅ | 已部署；桌面實機確認（收合、大綱、自動展開）；手機待使用者測 |
 | 鎖定畫面 ⏮⏭ 切篇（iPhone） | ✅ | 實機確認；「沒反應」是在最後一篇按 ⏭ → 改成頭尾繞回 |
-
+| V1-10 書的章節筆記（`rf-source: book`，METHOD §1.2） | ✅ | 程式＋測試完成；桌面＋iPhone 播 m4a、拖曳（Range）待實機 |
 ## V1-0 插件骨架（主 session 自己做）
 - [x] 照 `../obsidian-vocab-tracker` 的工具鏈：`package.json` scripts（typecheck → lint → test → build = `npm run check`）、
       `tsconfig.json`、`esbuild.config.mjs`、`eslint.config.mjs`、`vitest.config.ts`、`version-bump.mjs`。
@@ -91,6 +91,13 @@ v1 目標：**TED、只串流**。面板列出 TED 演講（標題、講者、�
 - [x] 閱讀模式：大段標題後 ▶、播到收起的大段自動展開、卡片顯示「第 n / N 節」。
 - [x] whisper 驗證小段時間（`pipeline/tools/ted_chunk_check.py`；結果見 LEDGER）。
 - [ ] 使用者在手機上確認收合與大綱。
+
+## V1-10 書的章節筆記（METHOD §1.2；2026-10-17 使用者同意擴充 §1）
+- [x] `rf-audio` 不是 `.m3u8` → 所有平台直接 `audio.src`（`isHlsUrl` 純函式＋測試）。
+- [x] 閱讀模式、▶、跟隨、已讀、播完接下一章／鎖定畫面 ⏮⏭ 對 book 筆記都適用（本來就只看 `rf-source`＋`rf-id`）；
+      下一章 = 同資料夾依檔名排序（數字照數值比）；鎖定畫面顯示作者／書名。
+- [x] fixture `tests/fixtures/book/17 SEVENTEEN.md` 解析測試（假網址）。
+- [ ] 實機：桌面＋iPhone 播 Worker 上的 m4a、▶ 跳段、進度條拖曳（Range／206）、播完接下一章、鎖定畫面 ⏮⏭。
 
 ## 之後（v1 不做）
 - BBC 6 Minute English：要先在 `pipeline/` 用 whisper 算時間戳並發布（設計見 METHOD §4）。

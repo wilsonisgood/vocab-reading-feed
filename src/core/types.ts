@@ -1,8 +1,8 @@
 // Shared types for every v1 task (AGENT.md §3). Change only in the main
 // session; parallel tasks import from here instead of declaring their own.
 
-/** Where a note came from. v1 only has TED (METHOD §2). */
-export type RfSource = "ted";
+/** Where a note came from: TED (loaded by the plugin, METHOD §2) or a book chapter (written by the user's own tools, METHOD §1.2). */
+export type RfSource = "ted" | "book";
 
 /** One row of the browser list, from the TED GraphQL `videos` query (METHOD §2.1). */
 export interface TalkSummary {

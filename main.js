@@ -1170,6 +1170,17 @@ var ReadingFeedSettingTab = class extends import_obsidian3.PluginSettingTab {
 // src/ui/reading/installReading.ts
 var import_obsidian5 = require("obsidian");
 
+// src/core/audio.ts
+function isHlsUrl(url) {
+  let path;
+  try {
+    path = new URL(url).pathname;
+  } catch (e) {
+    path = url.split(/[?#]/)[0];
+  }
+  return /\.m3u8$/i.test(path);
+}
+
 // src/services/player/logic.ts
 function findIndex(times, t) {
   let lo = 0;
@@ -1288,7 +1299,7 @@ var PlayerService = class {
       this.stopAt = null;
       const s = this.deps.getSettings();
       this.follow = { enabled: s.followScroll, suspended: false };
-      if (this.audio.canPlayType(HLS_MIME) !== "") {
+      if (!isHlsUrl(audioUrl) || this.audio.canPlayType(HLS_MIME) !== "") {
         this.audio.src = audioUrl;
       } else {
         this.hls = this.deps.attachHls(this.audio, audioUrl, this.deps.http);
@@ -25163,7 +25174,7 @@ function sortNotes(items) {
     const pa = pubKey(a.published);
     const pb = pubKey(b.published);
     if (pa !== pb) return pa === "" ? 1 : pb === "" ? -1 : pa < pb ? 1 : -1;
-    return a.name < b.name ? -1 : a.name > b.name ? 1 : 0;
+    return a.name.localeCompare(b.name, "en", { numeric: true });
   });
 }
 function neighborNote(items, path, dir, wrap = false) {
@@ -25498,8 +25509,8 @@ function installReading(plugin, player, getSettings, saveSettings) {
       try {
         media.metadata = file ? new MediaMetadata({
           title: noteTitle(file),
-          artist: typeof (fm == null ? void 0 : fm["speaker"]) === "string" ? fm["speaker"] : "",
-          album: "Reading Feed",
+          artist: fmString(fm, "speaker") || fmString(fm, "author"),
+          album: fmString(fm, "book") || "Reading Feed",
           artwork: typeof cover === "string" && cover !== "" ? [{ src: cover }] : []
         }) : null;
       } catch (e) {
@@ -25533,6 +25544,10 @@ function installReading(plugin, player, getSettings, saveSettings) {
     }
   }
   bindMediaActions();
+  function fmString(fm, key) {
+    const v = fm == null ? void 0 : fm[key];
+    return typeof v === "string" ? v : "";
+  }
   function fileAt(path) {
     const f = path === null ? null : app.vault.getAbstractFileByPath(path);
     return f instanceof import_obsidian5.TFile ? f : null;

@@ -199,8 +199,8 @@ export function installReading(
         media.metadata = file
           ? new MediaMetadata({
               title: noteTitle(file),
-              artist: typeof fm?.["speaker"] === "string" ? fm["speaker"] : "",
-              album: "Reading Feed",
+              artist: fmString(fm, "speaker") || fmString(fm, "author"),
+              album: fmString(fm, "book") || "Reading Feed",
               artwork: typeof cover === "string" && cover !== "" ? [{ src: cover }] : [],
             })
           : null;
@@ -236,6 +236,11 @@ export function installReading(
     }
   }
   bindMediaActions();
+
+  function fmString(fm: Record<string, unknown> | null, key: string): string {
+    const v = fm?.[key];
+    return typeof v === "string" ? v : "";
+  }
 
   function fileAt(path: string | null): TFile | null {
     const f = path === null ? null : app.vault.getAbstractFileByPath(path);
