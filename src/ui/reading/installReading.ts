@@ -145,7 +145,8 @@ export function installReading(
     for (const c of file.parent?.children ?? []) {
       if (!(c instanceof TFile) || c.extension !== "md") continue;
       const fm = rfFm(c);
-      if (fm) out.push({ path: c.path, name: c.name, published: fm["published"] });
+      // Chapters not narrated yet (no rf-audio, METHOD §5) are not "next".
+      if (fm && hasAudio(fm)) out.push({ path: c.path, name: c.name, published: fm["published"] });
     }
     return out;
   }
@@ -236,6 +237,10 @@ export function installReading(
     }
   }
   bindMediaActions();
+
+  function hasAudio(fm: Record<string, unknown>): boolean {
+    return fmString(fm, "rf-audio") !== "";
+  }
 
   function fmString(fm: Record<string, unknown> | null, key: string): string {
     const v = fm?.[key];
@@ -344,9 +349,9 @@ export function installReading(
     for (const leaf of app.workspace.getLeavesOfType("markdown")) {
       const view = leaf.view;
       if (!(view instanceof MarkdownView)) continue;
-      const rf = rfFm(view.file) !== null;
-      view.containerEl.toggleClass("rf-note", rf);
-      if (!rf || view.getMode() !== "preview") continue;
+      const fm = rfFm(view.file);
+      view.containerEl.toggleClass("rf-note", fm !== null);
+      if (!fm || !hasAudio(fm) || view.getMode() !== "preview") continue;
       seen.add(view);
       let entry = bars.get(view);
       if (entry && entry.path !== view.file?.path) {

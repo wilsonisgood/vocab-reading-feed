@@ -22,6 +22,7 @@ v1 目標：**TED、只串流**。面板列出 TED 演講（標題、講者、�
 | V1-9 大段／小段（rf-schema 2） | ✅ | 已部署；桌面實機確認（收合、大綱、自動展開）；手機待使用者測 |
 | 鎖定畫面 ⏮⏭ 切篇（iPhone） | ✅ | 實機確認；「沒反應」是在最後一篇按 ⏭ → 改成頭尾繞回 |
 | V1-10 書的章節筆記（`rf-source: book`，METHOD §1.2） | ✅ | 程式＋測試完成；桌面＋iPhone 播 m4a、拖曳（Range）待實機 |
+| V1-11 我的書（從使用者自己的書庫下載章節，METHOD §5） | ✅ | 程式＋測試完成；對真的書庫實機下載／更新待驗 |
 ## V1-0 插件骨架（主 session 自己做）
 - [x] 照 `../obsidian-vocab-tracker` 的工具鏈：`package.json` scripts（typecheck → lint → test → build = `npm run check`）、
       `tsconfig.json`、`esbuild.config.mjs`、`eslint.config.mjs`、`vitest.config.ts`、`version-bump.mjs`。
@@ -98,6 +99,15 @@ v1 目標：**TED、只串流**。面板列出 TED 演講（標題、講者、�
       下一章 = 同資料夾依檔名排序（數字照數值比）；鎖定畫面顯示作者／書名。
 - [x] fixture `tests/fixtures/book/17 SEVENTEEN.md` 解析測試（假網址）。
 - [ ] 實機：桌面＋iPhone 播 Worker 上的 m4a、▶ 跳段、進度條拖曳（Range／206）、播完接下一章、鎖定畫面 ⏮⏭。
+
+## V1-11 我的書（METHOD §5；2026-10-17 使用者同意）
+- [x] 設定「書庫網址」（密碼框、正規化、沒有預設值）。
+- [x] 「我的書」面板＋指令「開啟我的書」：書名、作者、已念／總章數、更新日、狀態（未下載／有更新／已是最新）、下載／更新。
+- [x] 下載到 `<資料夾>/Private Podcast/<folder>/<name>`；網路來的名字再清理；更新規則（sha＋指紋，本機有修改不覆蓋、可手動覆蓋）。
+- [x] 404／網路錯誤／格式錯誤的訊息與重試；純邏輯在 `src/core/library/logic.ts` 並有測試。
+- [x] 還沒念的章（沒有 `rf-audio`）不顯示播放器、不算下一章。
+- [ ] 實機：對真的書庫下載一本 → 開章節播放 → podcast 那邊多念一章後按「更新」只覆蓋那章 → 改一章內文後再更新顯示「本機有修改」→ 手動覆蓋。
+- [ ] 實機：手機（iPhone）上設定貼網址、面板版面、下載。
 
 ## 之後（v1 不做）
 - BBC 6 Minute English：要先在 `pipeline/` 用 whisper 算時間戳並發布（設計見 METHOD §4）。

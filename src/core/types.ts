@@ -1,5 +1,6 @@
 // Shared types for every v1 task (AGENT.md §3). Change only in the main
 // session; parallel tasks import from here instead of declaring their own.
+import type { LibrarySync } from "./library/logic";
 
 /** Where a note came from: TED (loaded by the plugin, METHOD §2) or a book chapter (written by the user's own tools, METHOD §1.2). */
 export type RfSource = "ted" | "book";
@@ -88,6 +89,10 @@ export interface ReadingFeedSettings {
   noTranscript: string[];
   /** Where the floating player bubble was dragged to, per device class; null = default corner (METHOD §3.1). */
   dockPos: { desktop: DockPos | null; mobile: DockPos | null };
+  /** The user's own book library, normalised to end in `/`; "" = not set. No default, ever (METHOD §5). */
+  libraryUrl: string;
+  /** What "My books" last downloaded, to tell remote updates from the user's own edits (METHOD §5.3). */
+  librarySync: LibrarySync;
 }
 
 /** Bubble centre as fractions (0–1) of the reading view's width / height. */
@@ -106,6 +111,8 @@ export const DEFAULT_SETTINGS: ReadingFeedSettings = {
   favorites: [],
   noTranscript: [],
   dockPos: { desktop: null, mobile: null },
+  libraryUrl: "",
+  librarySync: { chapters: {}, books: {} },
 };
 
 /** Frontmatter key set (YYYY-MM-DD) the first time any audio in the note plays (METHOD §1, §3.4). */

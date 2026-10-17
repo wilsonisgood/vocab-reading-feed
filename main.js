@@ -23,7 +23,7 @@ __export(main_exports, {
   default: () => ReadingFeedPlugin
 });
 module.exports = __toCommonJS(main_exports);
-var import_obsidian6 = require("obsidian");
+var import_obsidian7 = require("obsidian");
 
 // src/core/types.ts
 var RF_SCHEMA = 2;
@@ -37,7 +37,9 @@ var DEFAULT_SETTINGS = {
   autoReadingMode: true,
   favorites: [],
   noTranscript: [],
-  dockPos: { desktop: null, mobile: null }
+  dockPos: { desktop: null, mobile: null },
+  libraryUrl: "",
+  librarySync: { chapters: {}, books: {} }
 };
 var RF_READ_KEY = "rf-read";
 
@@ -1114,9 +1116,483 @@ function installBrowser(plugin, client, getSettings, saveSettings = () => Promis
   plugin.addRibbonIcon("newspaper", "\u958B\u555F Reading Feed", () => void open());
 }
 
-// src/ui/settings/SettingsTab.ts
+// src/ui/library/LibraryView.ts
 var import_obsidian3 = require("obsidian");
-var ReadingFeedSettingTab = class extends import_obsidian3.PluginSettingTab {
+
+// src/core/library/logic.ts
+var BOOKS_SUBFOLDER = "Private Podcast";
+function normalizeLibraryUrl(input) {
+  let u;
+  try {
+    u = new URL(input.trim());
+  } catch (e) {
+    return null;
+  }
+  if (u.protocol !== "https:" && u.protocol !== "http:") return null;
+  let path = u.pathname.replace(/\/library\.json$/i, "/");
+  if (!path.endsWith("/")) path += "/";
+  return `${u.protocol}//${u.host}${path}`;
+}
+function safeUrlSegments(path) {
+  const parts = path.split("/");
+  if (parts.some((p) => p === "" || p === "." || p === ".." || p.includes("\\"))) return null;
+  return parts.map(encodeURIComponent);
+}
+function libraryUrl(base) {
+  return `${base}library.json`;
+}
+function bookUrl(base, slug) {
+  const s = safeUrlSegments(slug);
+  return s && s.length === 1 ? `${base}${s[0]}/book.json` : null;
+}
+function chapterUrl(base, slug, file) {
+  const s = safeUrlSegments(slug);
+  const f = safeUrlSegments(file);
+  return s && s.length === 1 && f ? `${base}${s[0]}/${f.join("/")}` : null;
+}
+var BAD_NAME_CHARS = /[\\/:*?"<>|#^[\]\u0000-\u001f]/g;
+function safeSegment(name) {
+  const s = name.replace(BAD_NAME_CHARS, " ").replace(/\s+/g, " ").trim().replace(/^[.\s]+/, "").replace(/[.\s]+$/, "");
+  return s === "" ? null : s;
+}
+function bookFolderPath(rootFolder, book) {
+  var _a, _b;
+  const root = rootFolder.replace(/^\/+|\/+$/g, "");
+  const name = (_b = (_a = safeSegment(book.folder)) != null ? _a : safeSegment(book.slug)) != null ? _b : "book";
+  return [root, BOOKS_SUBFOLDER, name].filter((p) => p !== "").join("/");
+}
+function chapterFileName(ch) {
+  var _a, _b, _c;
+  const raw = ch.name.replace(/\.md$/i, "");
+  const fallback = `${String(ch.episode).padStart(2, "0")} ${ch.title}`;
+  const base = (_c = (_b = (_a = safeSegment(raw)) != null ? _a : safeSegment(fallback)) != null ? _b : safeSegment(ch.id)) != null ? _c : "chapter";
+  return `${base}.md`;
+}
+function chapterRfId(slug, chapterId) {
+  return `${slug}-${chapterId}`;
+}
+function str(v) {
+  return typeof v === "string" && v !== "" ? v : null;
+}
+function num(v) {
+  return typeof v === "number" && Number.isFinite(v) ? v : 0;
+}
+var LibraryFormatError = class extends Error {
+};
+function parseLibrary(json) {
+  var _a, _b, _c, _d;
+  const o = json;
+  if (!o || o.schema !== 1 || !Array.isArray(o.books)) throw new LibraryFormatError("library.json \u683C\u5F0F\u4E0D\u5C0D");
+  const out = [];
+  for (const b of o.books) {
+    const slug = str(b == null ? void 0 : b.slug);
+    if (!slug) continue;
+    out.push({
+      slug,
+      title: (_a = str(b.title)) != null ? _a : slug,
+      author: (_b = str(b.author)) != null ? _b : "",
+      folder: (_c = str(b.folder)) != null ? _c : slug,
+      chapters: num(b.chapters),
+      timed: num(b.timed),
+      updated: (_d = str(b.updated)) != null ? _d : ""
+    });
+  }
+  return out;
+}
+function parseBook(json) {
+  var _a, _b, _c, _d, _e, _f, _g;
+  const o = json;
+  const slug = str(o == null ? void 0 : o.slug);
+  if (!o || o.schema !== 1 || !slug || !Array.isArray(o.chapters)) throw new LibraryFormatError("book.json \u683C\u5F0F\u4E0D\u5C0D");
+  const chapters = [];
+  for (const c of o.chapters) {
+    const id = str(c == null ? void 0 : c.id);
+    const file = str(c == null ? void 0 : c.file);
+    if (!id || !file) continue;
+    chapters.push({
+      id,
+      file,
+      episode: num(c.episode),
+      title: (_a = str(c.title)) != null ? _a : id,
+      name: (_b = str(c.name)) != null ? _b : "",
+      sha: (_c = str(c.sha)) != null ? _c : "",
+      timed: c.timed === true
+    });
+  }
+  return {
+    slug,
+    title: (_d = str(o.title)) != null ? _d : slug,
+    author: (_e = str(o.author)) != null ? _e : "",
+    folder: (_f = str(o.folder)) != null ? _f : slug,
+    updated: (_g = str(o.updated)) != null ? _g : "",
+    chapters
+  };
+}
+var PLUGIN_FM_KEYS = [RF_READ_KEY];
+function splitFrontmatter(text) {
+  const t = text.replace(/\r\n?/g, "\n");
+  const m = /^---\n([\s\S]*?)\n---(?:\n|$)/.exec(t);
+  return m ? { yaml: m[1], body: t.slice(m[0].length) } : { yaml: null, body: t };
+}
+function stable(v) {
+  var _a;
+  if (Array.isArray(v)) return `[${v.map(stable).join(",")}]`;
+  if (v instanceof Date) return JSON.stringify(v.toISOString());
+  if (v && typeof v === "object") {
+    const o = v;
+    return `{${Object.keys(o).sort().map((k) => `${JSON.stringify(k)}:${stable(o[k])}`).join(",")}}`;
+  }
+  return (_a = JSON.stringify(v)) != null ? _a : "null";
+}
+function hash(s) {
+  let h1 = 3735928559;
+  let h2 = 1103547991;
+  for (let i = 0; i < s.length; i++) {
+    const c = s.charCodeAt(i);
+    h1 = Math.imul(h1 ^ c, 2654435761);
+    h2 = Math.imul(h2 ^ c, 1597334677);
+  }
+  h1 = Math.imul(h1 ^ h1 >>> 16, 2246822507) ^ Math.imul(h2 ^ h2 >>> 13, 3266489909);
+  h2 = Math.imul(h2 ^ h2 >>> 16, 2246822507) ^ Math.imul(h1 ^ h1 >>> 13, 3266489909);
+  return (h2 >>> 0).toString(16).padStart(8, "0") + (h1 >>> 0).toString(16).padStart(8, "0");
+}
+function noteFingerprint(text, parseYaml2) {
+  const { yaml, body } = splitFrontmatter(text);
+  let fm = null;
+  if (yaml !== null) {
+    try {
+      fm = parseYaml2(yaml);
+    } catch (e) {
+      fm = { "\0raw": yaml };
+    }
+  }
+  if (fm && typeof fm === "object" && !Array.isArray(fm)) {
+    const copy = { ...fm };
+    for (const k of PLUGIN_FM_KEYS) delete copy[k];
+    fm = copy;
+  }
+  return hash(`${stable(fm)}
+${body.replace(/[ \t]+$/gm, "").trimEnd()}`);
+}
+function decideChapter(localFp, record, remoteSha) {
+  if (localFp === null) return "create";
+  if (!record) return "unknown";
+  const changed = remoteSha === "" || remoteSha !== record.sha;
+  if (localFp === record.fp) return changed ? "overwrite" : "skip";
+  return changed ? "conflict" : "skip";
+}
+function bookState(book, sync) {
+  const rec = sync.books[book.slug];
+  if (!rec) return "new";
+  return rec.updated !== book.updated || book.updated === "" ? "update" : "current";
+}
+
+// src/services/library/LibraryClient.ts
+var LibraryError = class extends Error {
+  constructor(kind, message) {
+    super(message);
+    this.kind = kind;
+  }
+};
+var LibraryClient = class _LibraryClient {
+  constructor(http) {
+    this.http = http;
+  }
+  async get(url) {
+    if (url === null) throw new LibraryError("format", "\u66F8\u5EAB\u88E1\u6709\u4E0D\u5B89\u5168\u7684\u8DEF\u5F91");
+    let res;
+    try {
+      res = await this.http.request({ url, method: "GET" });
+    } catch (e) {
+      throw new LibraryError("network", e instanceof Error ? e.message : String(e));
+    }
+    if (res.status === 404) throw new LibraryError("notFound", "\u66F8\u5EAB\u7DB2\u5740\u4E0D\u5C0D\uFF08404\uFF09");
+    if (res.status !== 200) throw new LibraryError("http", `HTTP ${res.status}`);
+    return res.text;
+  }
+  async getJson(url) {
+    const text = await this.get(url);
+    try {
+      return JSON.parse(text);
+    } catch (e) {
+      throw new LibraryError("format", "\u4E0D\u662F JSON");
+    }
+  }
+  static format(f) {
+    try {
+      return f();
+    } catch (e) {
+      if (e instanceof LibraryFormatError) throw new LibraryError("format", e.message);
+      throw e;
+    }
+  }
+  async books(base) {
+    const json = await this.getJson(libraryUrl(base));
+    return _LibraryClient.format(() => parseLibrary(json));
+  }
+  async book(base, slug) {
+    const json = await this.getJson(bookUrl(base, slug));
+    return _LibraryClient.format(() => parseBook(json));
+  }
+  chapter(base, slug, ch) {
+    return this.get(chapterUrl(base, slug, ch.file));
+  }
+};
+
+// src/ui/library/LibraryView.ts
+var LIBRARY_VIEW_TYPE = "reading-feed-library";
+var STATE_LABEL = { new: "\u672A\u4E0B\u8F09", update: "\u6709\u66F4\u65B0", current: "\u5DF2\u662F\u6700\u65B0" };
+var fingerprint = (text) => noteFingerprint(text, import_obsidian3.parseYaml);
+function errorText(e) {
+  if (e instanceof LibraryError) {
+    if (e.kind === "notFound") return "\u66F8\u5EAB\u7DB2\u5740\u4E0D\u5C0D\uFF08\u627E\u4E0D\u5230\uFF09\u3002\u8ACB\u5230\u8A2D\u5B9A\u78BA\u8A8D\u66F8\u5EAB\u7DB2\u5740\u3002";
+    if (e.kind === "network") return `\u9023\u4E0D\u4E0A\u66F8\u5EAB\uFF08\u7DB2\u8DEF\u932F\u8AA4\uFF1A${e.message}\uFF09\u3002`;
+    return `\u66F8\u5EAB\u56DE\u61C9\u6709\u554F\u984C\uFF1A${e.message}`;
+  }
+  return e instanceof Error ? e.message : String(e);
+}
+var LibraryView = class extends import_obsidian3.ItemView {
+  constructor(leaf, deps) {
+    super(leaf);
+    this.deps = deps;
+    this.books = [];
+    this.error = "";
+    this.loading = false;
+    /** Slug being synced; one book at a time. */
+    this.busy = null;
+    this.progress = "";
+    this.results = /* @__PURE__ */ new Map();
+    /** Slug whose "overwrite local edits" was clicked once (second click confirms). */
+    this.confirmForce = null;
+  }
+  getViewType() {
+    return LIBRARY_VIEW_TYPE;
+  }
+  getDisplayText() {
+    return "\u6211\u7684\u66F8";
+  }
+  getIcon() {
+    return "book-open";
+  }
+  async onOpen() {
+    const root = this.contentEl;
+    root.empty();
+    root.addClass("rf-browser", "rf-library");
+    const head = root.createDiv("rf-library-head");
+    head.createDiv({
+      cls: "rf-library-note",
+      text: "\u53EA\u9023\u4F60\u5728\u8A2D\u5B9A\u88E1\u586B\u7684\u66F8\u5EAB\u7DB2\u5740\uFF1BReading Feed \u672C\u8EAB\u4E0D\u63D0\u4F9B\u4EFB\u4F55\u66F8\u5EAB\u6216\u97F3\u6A94\u3002"
+    });
+    const refresh = head.createEl("button", { text: "\u91CD\u65B0\u6574\u7406" });
+    refresh.onclick = () => void this.reload();
+    this.body = root.createDiv("rf-browser-list");
+    await this.reload();
+  }
+  base() {
+    return this.deps.getSettings().libraryUrl;
+  }
+  async reload() {
+    if (this.loading) return;
+    this.error = "";
+    if (this.base() === "") {
+      this.books = [];
+      this.render();
+      return;
+    }
+    this.loading = true;
+    this.render();
+    try {
+      this.books = await this.deps.client.books(this.base());
+    } catch (e) {
+      this.books = [];
+      this.error = errorText(e);
+    } finally {
+      this.loading = false;
+      this.render();
+    }
+  }
+  render() {
+    var _a, _b;
+    const el = this.body;
+    el.empty();
+    if (this.base() === "") {
+      el.createDiv({ cls: "rf-browser-status", text: "\u9084\u6C92\u6709\u66F8\u5EAB\u7DB2\u5740\uFF1A\u5230\u300C\u8A2D\u5B9A \u2192 Reading Feed \u2192 \u66F8\u5EAB\u7DB2\u5740\u300D\u8CBC\u4E0A\u4F60\u7684\u79C1\u4EBA\u7DB2\u5740\u3002" });
+      return;
+    }
+    if (this.loading) {
+      el.createDiv({ cls: "rf-browser-status", text: "\u8B80\u53D6\u66F8\u5EAB\u4E2D\u2026" });
+      return;
+    }
+    if (this.error) {
+      el.createDiv({ cls: "rf-browser-status rf-error", text: this.error });
+      const retry = el.createEl("button", { text: "\u91CD\u8A66" });
+      retry.onclick = () => void this.reload();
+      return;
+    }
+    if (this.books.length === 0) {
+      el.createDiv({ cls: "rf-browser-status", text: "\u66F8\u5EAB\u88E1\u6C92\u6709\u66F8\u3002" });
+      return;
+    }
+    const sync = this.deps.getSettings().librarySync;
+    for (const b of this.books) {
+      const row = el.createDiv("rf-row");
+      const body = row.createDiv("rf-row-body");
+      body.createDiv({ cls: "rf-row-title", text: b.title });
+      const date = b.updated.slice(0, 10);
+      body.createDiv({
+        cls: "rf-row-meta",
+        text: [b.author, `\u5DF2\u5FF5 ${b.timed} / ${b.chapters} \u7AE0`, date && `\u66F4\u65B0 ${date}`].filter(Boolean).join(" \xB7 ")
+      });
+      const state = bookState(b, sync);
+      const tags = body.createDiv("rf-row-tags");
+      tags.createSpan({ cls: state === "update" ? "rf-tag rf-tag-loaded" : "rf-tag", text: STATE_LABEL[state] });
+      const conflicts = (_b = (_a = sync.books[b.slug]) == null ? void 0 : _a.conflicts) != null ? _b : [];
+      if (conflicts.length > 0) {
+        body.createDiv({
+          cls: "rf-row-meta rf-error",
+          text: `\u672C\u6A5F\u6709\u4FEE\u6539\uFF0C\u672A\u66F4\u65B0\uFF1A${conflicts.join("\u3001")}`
+        });
+      }
+      const result = this.busy === b.slug ? this.progress : this.results.get(b.slug);
+      if (result) body.createDiv({ cls: "rf-browser-result", text: result });
+      const actions = row.createDiv("rf-library-actions");
+      const btn = actions.createEl("button", {
+        cls: state === "current" ? "" : "mod-cta",
+        text: state === "new" ? "\u4E0B\u8F09" : state === "update" ? "\u66F4\u65B0" : "\u6AA2\u67E5\u66F4\u65B0"
+      });
+      btn.disabled = this.busy !== null;
+      btn.onclick = () => void this.syncBook(b, false);
+      if (conflicts.length > 0) {
+        const force = actions.createEl("button", {
+          cls: this.confirmForce === b.slug ? "mod-warning" : "",
+          text: this.confirmForce === b.slug ? "\u78BA\u5B9A\u8986\u84CB\uFF1F" : "\u8986\u84CB\u672C\u6A5F\u4FEE\u6539"
+        });
+        force.disabled = this.busy !== null;
+        force.onclick = () => {
+          if (this.confirmForce !== b.slug) {
+            this.confirmForce = b.slug;
+            this.render();
+            return;
+          }
+          this.confirmForce = null;
+          void this.syncBook(b, true);
+        };
+      }
+    }
+  }
+  async ensureFolder(path) {
+    const { vault } = this.app;
+    let cur = "";
+    for (const part of (0, import_obsidian3.normalizePath)(path).split("/").filter(Boolean)) {
+      cur = cur === "" ? part : `${cur}/${part}`;
+      if (!vault.getAbstractFileByPath(cur)) await vault.createFolder(cur);
+    }
+  }
+  /** Download / update one book (METHOD §5.3). `force` also overwrites chapters the user edited. */
+  async syncBook(lib, force) {
+    var _a, _b;
+    if (this.busy !== null) return;
+    const base = this.base();
+    const settings = this.deps.getSettings();
+    const sync = settings.librarySync;
+    const { vault } = this.app;
+    this.busy = lib.slug;
+    this.progress = "\u8B80\u53D6\u7AE0\u7BC0\u6E05\u55AE\u2026";
+    this.render();
+    let created = 0;
+    let updated = 0;
+    const conflicts = [];
+    const failed = [];
+    try {
+      const book = await this.deps.client.book(base, lib.slug);
+      const folder = (0, import_obsidian3.normalizePath)(bookFolderPath(settings.folder, book));
+      await this.ensureFolder(folder);
+      for (const [i, ch] of book.chapters.entries()) {
+        const name = chapterFileName(ch);
+        this.progress = `${i + 1} / ${book.chapters.length}\uFF1A${name}`;
+        this.render();
+        const rfId = chapterRfId(book.slug, ch.id);
+        const path = (0, import_obsidian3.normalizePath)(`${folder}/${name}`);
+        try {
+          const existing = vault.getAbstractFileByPath(path);
+          if (existing && !(existing instanceof import_obsidian3.TFile)) throw new Error("\u540C\u540D\u8CC7\u6599\u593E\u5DF2\u5B58\u5728");
+          const localText = existing instanceof import_obsidian3.TFile ? await vault.read(existing) : null;
+          const localFp = localText === null ? null : fingerprint(localText);
+          let action = decideChapter(localFp, sync.chapters[rfId], ch.sha);
+          let text = null;
+          if (action === "unknown") {
+            text = await this.deps.client.chapter(base, book.slug, ch);
+            if (fingerprint(text) === localFp) {
+              sync.chapters[rfId] = { sha: ch.sha, fp: localFp };
+              continue;
+            }
+            action = "conflict";
+          }
+          if (action === "conflict" && force) action = "overwrite";
+          if (action === "skip") continue;
+          if (action === "conflict") {
+            conflicts.push(name);
+            continue;
+          }
+          text != null ? text : text = await this.deps.client.chapter(base, book.slug, ch);
+          if (existing instanceof import_obsidian3.TFile) {
+            const read = (_b = (_a = this.app.metadataCache.getFileCache(existing)) == null ? void 0 : _a.frontmatter) == null ? void 0 : _b[RF_READ_KEY];
+            await vault.modify(existing, text);
+            if (read !== void 0 && read !== null && read !== "") {
+              await this.app.fileManager.processFrontMatter(existing, (fm) => {
+                var _a2, _b2;
+                (_b2 = fm[_a2 = RF_READ_KEY]) != null ? _b2 : fm[_a2] = read;
+              });
+            }
+            updated++;
+          } else {
+            await vault.create(path, text);
+            created++;
+          }
+          sync.chapters[rfId] = { sha: ch.sha, fp: fingerprint(text) };
+        } catch (e) {
+          failed.push(`${name}\uFF08${errorText(e)}\uFF09`);
+        }
+      }
+      sync.books[book.slug] = { updated: failed.length > 0 ? "" : lib.updated, conflicts };
+      const parts = [
+        created > 0 && `\u65B0\u589E ${created} \u7AE0`,
+        updated > 0 && `\u66F4\u65B0 ${updated} \u7AE0`,
+        conflicts.length > 0 && `${conflicts.length} \u7AE0\u672C\u6A5F\u6709\u4FEE\u6539\uFF0C\u672A\u66F4\u65B0`,
+        failed.length > 0 && `\u5931\u6557\uFF1A${failed.join("\u3001")}\uFF08\u53EF\u518D\u6309\u4E00\u6B21\u91CD\u8A66\uFF09`
+      ].filter(Boolean);
+      this.results.set(lib.slug, parts.length > 0 ? parts.join("\uFF1B") : "\u5DF2\u662F\u6700\u65B0");
+    } catch (e) {
+      this.results.set(lib.slug, `${errorText(e)}\uFF08\u53EF\u518D\u6309\u4E00\u6B21\u91CD\u8A66\uFF09`);
+    } finally {
+      await this.deps.saveSettings();
+      this.busy = null;
+      this.progress = "";
+      this.render();
+    }
+  }
+};
+
+// src/ui/library/installLibrary.ts
+function installLibrary(plugin, client, getSettings, saveSettings) {
+  plugin.registerView(LIBRARY_VIEW_TYPE, (leaf) => new LibraryView(leaf, { client, getSettings, saveSettings }));
+  const open = async () => {
+    var _a;
+    const { workspace } = plugin.app;
+    let leaf = (_a = workspace.getLeavesOfType(LIBRARY_VIEW_TYPE)[0]) != null ? _a : null;
+    if (!leaf) {
+      leaf = workspace.getRightLeaf(false);
+      if (!leaf) return;
+      await leaf.setViewState({ type: LIBRARY_VIEW_TYPE, active: true });
+    }
+    await workspace.revealLeaf(leaf);
+  };
+  plugin.addCommand({ id: "open-library", name: "\u958B\u555F\u6211\u7684\u66F8", callback: () => void open() });
+}
+
+// src/ui/settings/SettingsTab.ts
+var import_obsidian4 = require("obsidian");
+var ReadingFeedSettingTab = class extends import_obsidian4.PluginSettingTab {
   constructor(app, host) {
     super(app, host);
     this.host = host;
@@ -1125,40 +1601,53 @@ var ReadingFeedSettingTab = class extends import_obsidian3.PluginSettingTab {
     const { containerEl } = this;
     const s = this.host.settings;
     containerEl.empty();
-    new import_obsidian3.Setting(containerEl).setName("\u5B58\u653E\u8CC7\u6599\u593E").setDesc("\u8F09\u5165\u7684\u6587\u7AE0\u6703\u653E\u5728\u9019\u500B\u8CC7\u6599\u593E\u5E95\u4E0B\u7684 TED \u5B50\u8CC7\u6599\u593E\u3002").addText(
+    new import_obsidian4.Setting(containerEl).setName("\u5B58\u653E\u8CC7\u6599\u593E").setDesc("\u8F09\u5165\u7684\u6587\u7AE0\u6703\u653E\u5728\u9019\u500B\u8CC7\u6599\u593E\u5E95\u4E0B\u7684 TED \u5B50\u8CC7\u6599\u593E\u3002").addText(
       (t) => t.setValue(s.folder).onChange(async (v) => {
         s.folder = v.trim();
         await this.host.saveSettings();
       })
     );
-    new import_obsidian3.Setting(containerEl).setName("\u9810\u8A2D\u901F\u5EA6").addDropdown((d) => {
+    const lib = new import_obsidian4.Setting(containerEl).setName("\u66F8\u5EAB\u7DB2\u5740\uFF08\u6211\u7684\u66F8\uFF09").setDesc(
+      `\u4F60\u81EA\u5DF1\u7684\u79C1\u4EBA\u66F8\u5EAB\u7DB2\u5740\uFF08\u7D50\u5C3E\u662F /\uFF0C\u6216 \u2026/library.json\uFF09\u3002\u63D2\u4EF6\u53EA\u9023\u4F60\u586B\u7684\u9019\u500B\u7DB2\u5740\uFF0C\u672C\u8EAB\u4E0D\u63D0\u4F9B\u4EFB\u4F55\u66F8\u5EAB\uFF1B\u66F8\u6703\u4E0B\u8F09\u5230\u300C\u5B58\u653E\u8CC7\u6599\u593E/${BOOKS_SUBFOLDER}/\u66F8\u540D/\u300D\u3002\u7DB2\u5740\u542B\u79C1\u5BC6\u91D1\u9470\uFF0C\u4E0D\u8981\u5206\u4EAB\u3002`
+    );
+    lib.addText((t) => {
+      t.inputEl.type = "password";
+      t.setPlaceholder("https://\u2026/<\u91D1\u9470>/").setValue(s.libraryUrl).onChange(async (v) => {
+        const n = v.trim() === "" ? "" : normalizeLibraryUrl(v);
+        lib.descEl.toggleClass("rf-error", n === null);
+        if (n === null) return;
+        s.libraryUrl = n;
+        await this.host.saveSettings();
+      });
+    });
+    new import_obsidian4.Setting(containerEl).setName("\u9810\u8A2D\u901F\u5EA6").addDropdown((d) => {
       for (const v of [0.75, 1, 1.25, 1.5]) d.addOption(String(v), `${v}x`);
       d.setValue(String(s.defaultSpeed)).onChange(async (v) => {
         s.defaultSpeed = Number(v);
         await this.host.saveSettings();
       });
     });
-    new import_obsidian3.Setting(containerEl).setName("\u25B6 \u9810\u8A2D\u884C\u70BA").addDropdown((d) => {
+    new import_obsidian4.Setting(containerEl).setName("\u25B6 \u9810\u8A2D\u884C\u70BA").addDropdown((d) => {
       d.addOption("toEnd", "\u64AD\u5230\u7D50\u675F").addOption("paragraph", "\u53EA\u64AD\u9019\u6BB5");
       d.setValue(s.playMode).onChange(async (v) => {
         s.playMode = v;
         await this.host.saveSettings();
       });
     });
-    new import_obsidian3.Setting(containerEl).setName("\u64AD\u5B8C\u4E00\u7BC7\u5F8C").setDesc("\u9396\u5B9A\u756B\u9762\u6642\u4E5F\u7167\u9019\u500B\u8A2D\u5B9A\u63A5\u8457\u64AD\u3002").addDropdown((d) => {
+    new import_obsidian4.Setting(containerEl).setName("\u64AD\u5B8C\u4E00\u7BC7\u5F8C").setDesc("\u9396\u5B9A\u756B\u9762\u6642\u4E5F\u7167\u9019\u500B\u8A2D\u5B9A\u63A5\u8457\u64AD\u3002").addDropdown((d) => {
       d.addOption("next", "\u64AD\u4E0B\u4E00\u7BC7").addOption("loopAll", "\u64AD\u4E0B\u4E00\u7BC7\uFF0C\u6700\u5F8C\u4E00\u7BC7\u64AD\u5B8C\u56DE\u5230\u7B2C\u4E00\u7BC7").addOption("repeatOne", "\u91CD\u64AD\u9019\u7BC7").addOption("stop", "\u505C\u6B62");
       d.setValue(s.afterEnd).onChange(async (v) => {
         s.afterEnd = v;
         await this.host.saveSettings();
       });
     });
-    new import_obsidian3.Setting(containerEl).setName("\u8DDF\u96A8\u6372\u52D5").addToggle(
+    new import_obsidian4.Setting(containerEl).setName("\u8DDF\u96A8\u6372\u52D5").addToggle(
       (t) => t.setValue(s.followScroll).onChange(async (v) => {
         s.followScroll = v;
         await this.host.saveSettings();
       })
     );
-    new import_obsidian3.Setting(containerEl).setName("\u958B\u555F rf \u7B46\u8A18\u6642\u81EA\u52D5\u5207\u5230\u95B1\u8B80\u6A21\u5F0F").addToggle(
+    new import_obsidian4.Setting(containerEl).setName("\u958B\u555F rf \u7B46\u8A18\u6642\u81EA\u52D5\u5207\u5230\u95B1\u8B80\u6A21\u5F0F").addToggle(
       (t) => t.setValue(s.autoReadingMode).onChange(async (v) => {
         s.autoReadingMode = v;
         await this.host.saveSettings();
@@ -1168,7 +1657,7 @@ var ReadingFeedSettingTab = class extends import_obsidian3.PluginSettingTab {
 };
 
 // src/ui/reading/installReading.ts
-var import_obsidian5 = require("obsidian");
+var import_obsidian6 = require("obsidian");
 
 // src/core/audio.ts
 function isHlsUrl(url) {
@@ -2439,7 +2928,7 @@ function decodeText(data, options = {}) {
     byteLength
   } = view2;
   const endian = encoding !== UTF_16_BE;
-  let str = "";
+  let str2 = "";
   let char;
   while (byteOffset < byteLength) {
     switch (encoding) {
@@ -2482,9 +2971,9 @@ function decodeText(data, options = {}) {
         byteOffset += 2;
         break;
     }
-    str += String.fromCodePoint(char);
+    str2 += String.fromCodePoint(char);
   }
-  return str;
+  return str2;
 }
 function uuid() {
   try {
@@ -2719,18 +3208,18 @@ function getId3Timestamp(data) {
   for (const frame of frames) if (isId3TimestampFrame(frame)) return readId3Timestamp(frame);
 }
 function arrayToHex(array) {
-  let str = "";
+  let str2 = "";
   for (let i = 0; i < array.length; i++) {
     let h = array[i].toString(16);
     if (h.length < 2) {
       h = "0" + h;
     }
-    str += h;
+    str2 += h;
   }
-  return str;
+  return str2;
 }
-function hexToArrayBuffer(str) {
-  return Uint8Array.from(str.replace(/^0x/, "").replace(/([\da-fA-F]{2}) ?/g, "0x$1 ").replace(/ +$/, "").split(" ")).buffer;
+function hexToArrayBuffer(str2) {
+  return Uint8Array.from(str2.replace(/^0x/, "").replace(/([\da-fA-F]{2}) ?/g, "0x$1 ").replace(/ +$/, "").split(" ")).buffer;
 }
 function bin2str(data) {
   return String.fromCharCode.apply(null, data);
@@ -3151,8 +3640,8 @@ function skipBERInteger(bytes, i) {
 function toHex(x) {
   return ("0" + x.toString(16).toUpperCase()).slice(-2);
 }
-function addLeadingZero(num) {
-  return (num < 10 ? "0" : "") + num;
+function addLeadingZero(num2) {
+  return (num2 < 10 ? "0" : "") + num2;
 }
 function patchEncyptionData(initSegment, decryptdata) {
   if (!initSegment || !decryptdata) {
@@ -4089,13 +4578,13 @@ function videoCodecPreferenceValue(videoCodec) {
 }
 function codecsSetSelectionPreferenceValue(codecSet) {
   const limitedHevcSupport = userAgentHevcSupportIsInaccurate();
-  return codecSet.split(",").reduce((num, fourCC) => {
+  return codecSet.split(",").reduce((num2, fourCC) => {
     const lowerPriority = limitedHevcSupport && isHEVC(fourCC);
     const preferenceValue = lowerPriority ? 9 : sampleEntryCodesISO.video[fourCC];
     if (preferenceValue) {
-      return (preferenceValue * 2 + num) / (num ? 3 : 2);
+      return (preferenceValue * 2 + num2) / (num2 ? 3 : 2);
     }
-    return (sampleEntryCodesISO.audio[fourCC] + num) / (num ? 2 : 1);
+    return (sampleEntryCodesISO.audio[fourCC] + num2) / (num2 ? 2 : 1);
   }, 0);
 }
 var CODEC_COMPATIBLE_NAMES = {};
@@ -6441,8 +6930,8 @@ var M3U8Parser = class _M3U8Parser {
       alwaysNormalize: true
     });
   }
-  static isMediaPlaylist(str) {
-    return IS_MEDIA_PLAYLIST.test(str);
+  static isMediaPlaylist(str2) {
+    return IS_MEDIA_PLAYLIST.test(str2);
   }
   static parseMasterPlaylist(string, baseurl) {
     const hasVariableRefs = false;
@@ -25162,7 +25651,7 @@ var attachHls = (audio, url, http) => {
 };
 
 // src/ui/reading/bar.ts
-var import_obsidian4 = require("obsidian");
+var import_obsidian5 = require("obsidian");
 
 // src/ui/reading/logic.ts
 function pubKey(v) {
@@ -25214,13 +25703,13 @@ var R = 20;
 var DRAG_SLOP = 5;
 var cardOpen = false;
 function createBar(player, path, a) {
-  const el = createDiv({ cls: ["rf-dock", import_obsidian4.Platform.isMobile ? "rf-dock-mobile" : "rf-dock-desktop"] });
+  const el = createDiv({ cls: ["rf-dock", import_obsidian5.Platform.isMobile ? "rf-dock-mobile" : "rf-dock-desktop"] });
   const bubble = el.createEl("button", { cls: "rf-dock-bubble", attr: { "aria-label": "\u64AD\u653E\u5668" } });
-  (0, import_obsidian4.setIcon)(bubble, "headphones");
+  (0, import_obsidian5.setIcon)(bubble, "headphones");
   const card = el.createDiv("rf-dock-card");
   const btn = (parent, cls, icon, label, fn) => {
     const b = parent.createEl("button", { cls: ["rf-dock-btn", cls], attr: { "aria-label": label } });
-    (0, import_obsidian4.setIcon)(b, icon);
+    (0, import_obsidian5.setIcon)(b, icon);
     b.addEventListener("click", (e) => {
       e.preventDefault();
       e.stopPropagation();
@@ -25247,7 +25736,7 @@ function createBar(player, path, a) {
   const jump = extra.createEl("button", { cls: "rf-dock-text rf-dock-jump", text: "\u8DF3\u5230\u8A72\u7BC7 \u203A" });
   jump.addEventListener("click", () => a.jump());
   more.addEventListener("click", (e) => {
-    const m = new import_obsidian4.Menu();
+    const m = new import_obsidian5.Menu();
     for (const s of SPEEDS) {
       m.addItem((i) => i.setTitle(`${s}x`).setChecked(player.speed === s).onClick(() => player.setSpeed(s)));
     }
@@ -25271,7 +25760,7 @@ function createBar(player, path, a) {
       el.style.left = "";
       el.style.top = "";
     }
-    const side = cardSide(p != null ? p : import_obsidian4.Platform.isMobile ? { x: 1, y: 1 } : { x: 1, y: 0 });
+    const side = cardSide(p != null ? p : import_obsidian5.Platform.isMobile ? { x: 1, y: 1 } : { x: 1, y: 0 });
     el.toggleClass("rf-dock-card-left", side.left);
     el.toggleClass("rf-dock-card-up", side.up);
   };
@@ -25330,7 +25819,7 @@ function createBar(player, path, a) {
     const target = player.notePath !== null;
     const icon = player.playing ? "pause" : "play";
     if (icon !== lastIcon) {
-      (0, import_obsidian4.setIcon)(play, icon);
+      (0, import_obsidian5.setIcon)(play, icon);
       lastIcon = icon;
     }
     bubble.toggleClass("is-playing", player.playing);
@@ -25368,7 +25857,7 @@ function createPlayer(plugin, http, getSettings) {
 function nowPlaying(app, player) {
   var _a;
   const f = player.notePath === null ? null : app.vault.getAbstractFileByPath(player.notePath);
-  if (!(f instanceof import_obsidian5.TFile)) return null;
+  if (!(f instanceof import_obsidian6.TFile)) return null;
   const k = readRfKey((_a = app.metadataCache.getFileCache(f)) == null ? void 0 : _a.frontmatter);
   return k ? { key: loadedKey(k.source, k.id), playing: player.playing } : null;
 }
@@ -25392,7 +25881,7 @@ function installReading(plugin, player, getSettings, saveSettings) {
     if (path === null) return [];
     return app.workspace.getLeavesOfType("markdown").map((l) => l.view).filter((v) => {
       var _a;
-      return v instanceof import_obsidian5.MarkdownView && ((_a = v.file) == null ? void 0 : _a.path) === path;
+      return v instanceof import_obsidian6.MarkdownView && ((_a = v.file) == null ? void 0 : _a.path) === path;
     });
   }
   function unfoldSectionOf(view2, line) {
@@ -25462,9 +25951,9 @@ function installReading(plugin, player, getSettings, saveSettings) {
     var _a, _b;
     const out = [];
     for (const c of (_b = (_a = file.parent) == null ? void 0 : _a.children) != null ? _b : []) {
-      if (!(c instanceof import_obsidian5.TFile) || c.extension !== "md") continue;
+      if (!(c instanceof import_obsidian6.TFile) || c.extension !== "md") continue;
       const fm = rfFm(c);
-      if (fm) out.push({ path: c.path, name: c.name, published: fm["published"] });
+      if (fm && hasAudio(fm)) out.push({ path: c.path, name: c.name, published: fm["published"] });
     }
     return out;
   }
@@ -25473,7 +25962,7 @@ function installReading(plugin, player, getSettings, saveSettings) {
     if (!file) return;
     const n = neighborNote(siblings(file), file.path, dir);
     const target = n && app.vault.getAbstractFileByPath(n.path);
-    if (!(target instanceof import_obsidian5.TFile)) return;
+    if (!(target instanceof import_obsidian6.TFile)) return;
     startNote(target);
     void view2.leaf.openFile(target);
   }
@@ -25544,13 +26033,16 @@ function installReading(plugin, player, getSettings, saveSettings) {
     }
   }
   bindMediaActions();
+  function hasAudio(fm) {
+    return fmString(fm, "rf-audio") !== "";
+  }
   function fmString(fm, key) {
     const v = fm == null ? void 0 : fm[key];
     return typeof v === "string" ? v : "";
   }
   function fileAt(path) {
     const f = path === null ? null : app.vault.getAbstractFileByPath(path);
-    return f instanceof import_obsidian5.TFile ? f : null;
+    return f instanceof import_obsidian6.TFile ? f : null;
   }
   function targetFile(view2) {
     var _a;
@@ -25627,9 +26119,9 @@ function installReading(plugin, player, getSettings, saveSettings) {
           elsewhere: player.notePath !== null && player.notePath !== ((_d = view2.file) == null ? void 0 : _d.path)
         };
       },
-      getPos: () => getSettings().dockPos[import_obsidian5.Platform.isMobile ? "mobile" : "desktop"],
+      getPos: () => getSettings().dockPos[import_obsidian6.Platform.isMobile ? "mobile" : "desktop"],
       setPos: (p) => {
-        getSettings().dockPos[import_obsidian5.Platform.isMobile ? "mobile" : "desktop"] = p;
+        getSettings().dockPos[import_obsidian6.Platform.isMobile ? "mobile" : "desktop"] = p;
         void (saveSettings == null ? void 0 : saveSettings());
         bars.forEach((b) => b.bar.update());
       }
@@ -25644,10 +26136,10 @@ function installReading(plugin, player, getSettings, saveSettings) {
     const seen = /* @__PURE__ */ new Set();
     for (const leaf of app.workspace.getLeavesOfType("markdown")) {
       const view2 = leaf.view;
-      if (!(view2 instanceof import_obsidian5.MarkdownView)) continue;
-      const rf = rfFm(view2.file) !== null;
-      view2.containerEl.toggleClass("rf-note", rf);
-      if (!rf || view2.getMode() !== "preview") continue;
+      if (!(view2 instanceof import_obsidian6.MarkdownView)) continue;
+      const fm = rfFm(view2.file);
+      view2.containerEl.toggleClass("rf-note", fm !== null);
+      if (!fm || !hasAudio(fm) || view2.getMode() !== "preview") continue;
       seen.add(view2);
       let entry = bars.get(view2);
       if (entry && entry.path !== ((_a = view2.file) == null ? void 0 : _a.path)) {
@@ -25672,7 +26164,7 @@ function installReading(plugin, player, getSettings, saveSettings) {
   function tryAutoPreview(file) {
     var _a;
     if (!file || !getSettings().autoReadingMode || !rfFm(file)) return;
-    const view2 = app.workspace.getActiveViewOfType(import_obsidian5.MarkdownView);
+    const view2 = app.workspace.getActiveViewOfType(import_obsidian6.MarkdownView);
     if (!view2 || ((_a = view2.file) == null ? void 0 : _a.path) !== file.path || autoDone.get(view2.leaf) === file.path) return;
     autoDone.set(view2.leaf, file.path);
     if (view2.getMode() === "preview") return;
@@ -25685,7 +26177,7 @@ function installReading(plugin, player, getSettings, saveSettings) {
     if (path === null || readMarked.has(path)) return;
     readMarked.add(path);
     const file = app.vault.getAbstractFileByPath(path);
-    if (file instanceof import_obsidian5.TFile) {
+    if (file instanceof import_obsidian6.TFile) {
       void app.fileManager.processFrontMatter(file, (fm) => {
         var _a, _b;
         (_b = fm[_a = RF_READ_KEY]) != null ? _b : fm[_a] = todayString();
@@ -25726,7 +26218,7 @@ function installReading(plugin, player, getSettings, saveSettings) {
     var _a;
     if (!readRfKey(ctx.frontmatter)) return;
     const file = app.vault.getAbstractFileByPath(ctx.sourcePath);
-    if (!(file instanceof import_obsidian5.TFile)) return;
+    if (!(file instanceof import_obsidian6.TFile)) return;
     const info = await getInfo(file, ctx.frontmatter);
     const sec = ctx.getSectionInfo(el);
     if (!info || !sec) return;
@@ -25818,7 +26310,7 @@ function installReading(plugin, player, getSettings, saveSettings) {
 }
 
 // main.ts
-var ReadingFeedPlugin = class extends import_obsidian6.Plugin {
+var ReadingFeedPlugin = class extends import_obsidian7.Plugin {
   constructor() {
     super(...arguments);
     this.settings = { ...DEFAULT_SETTINGS };
@@ -25835,6 +26327,7 @@ var ReadingFeedPlugin = class extends import_obsidian6.Plugin {
         return () => offs.forEach((off) => off());
       }
     });
+    installLibrary(this, new LibraryClient(http), () => this.settings, () => this.saveSettings());
     this.addSettingTab(new ReadingFeedSettingTab(this.app, this));
   }
   async loadSettings() {
@@ -25843,6 +26336,8 @@ var ReadingFeedPlugin = class extends import_obsidian6.Plugin {
     this.settings.favorites = [...this.settings.favorites];
     this.settings.noTranscript = [...this.settings.noTranscript];
     this.settings.dockPos = { ...DEFAULT_SETTINGS.dockPos, ...this.settings.dockPos };
+    const sync = this.settings.librarySync;
+    this.settings.librarySync = { chapters: { ...sync == null ? void 0 : sync.chapters }, books: { ...sync == null ? void 0 : sync.books } };
   }
   async saveSettings() {
     await this.saveData(this.settings);

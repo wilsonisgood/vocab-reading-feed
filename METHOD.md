@@ -217,3 +217,39 @@ POST https://www.ted.com/graphql   content-type: application/json
 
 v1 不做。設計保留在 git 歷史 `ed3a6c8` 的 METHOD.md（段落切法、指紋 fp、時間戳 JSON、whisper 對齊、驗收門檻），
 做 BBC 時再搬回來。
+
+## 5. 我的書（使用者自己的書庫；2026-10-17 使用者訂定）
+
+只有知道使用者私人網址的人能用：插件連到**使用者自己在設定填的書庫網址**，列出底下有哪些書，下載成 §1.2 的 book 筆記。
+⛔ 插件不提供任何書庫服務、不內建任何網址（設定沒有預設值；repo 裡的測試一律用 `https://audio.example.test/<"0"×32>/`）
+→ 憲法 1 不受影響：我們不散布音檔或原文，書與音檔都在使用者自己的儲存空間。
+
+### 5.1 書庫格式（由使用者自己的工具產生；插件只讀）
+- 書庫網址 = `https://<host>/<32 位 hex secret>/`。設定也接受 `…/<secret>`、`…/library.json`，一律正規化成結尾 `/` 的 base
+  （去掉 query／fragment；只接受 http(s)）。網址含 secret，設定欄位用密碼框。
+- `GET <base>library.json` → `{"schema":1,"books":[{"slug","title","author","folder","chapters","timed","updated"}]}`
+  （`chapters` 總章數、`timed` 已念章數、`updated` ISO 時間）。
+- `GET <base><slug>/book.json` → `{"schema":1,"slug","title","author","folder","updated","chapters":[{"id","episode","title","file","name","sha","timed"}]}`
+  （`sha` = 章節 md 內容 sha1 前 12 碼；`name` = vault 檔名，例 `01 ONE.md`）。
+- `GET <base><slug>/<file>` → 章節 md（§1.2）。`timed: false` 的章有 `rf-source`／`rf-id`／`rf-schema` 但沒有 `rf-audio`、沒有 `%%rf%%`：
+  純文字，不顯示播放器，也不算「下一章」（§3.1 的排序只看有 `rf-audio` 的筆記）。
+- 全部用 `requestUrl` 抓（不受 CORS 限制）。`schema` 不是 1 → 格式錯誤；缺 `slug`／`id`／`file` 的項目略過。
+- 網路來的 `slug`／`file` 組網址前逐段 `encodeURIComponent`，有空段、`.`、`..`、`\` 就拒絕。
+
+### 5.2 下載位置
+- `<存放資料夾>/Private Podcast/<book.folder>/<chapter.name>`（預設 `Reading Feed/Private Podcast/<書名>/01 ONE.md`）。
+- `folder`／`name` 來自網路 → 再清理一次：`\/:*?"<>|#^[]` 與控制字元換成空白、壓空白、去頭尾空白與點；清完是空的就退回
+  `slug`／`<兩位集數> <章名>`／`<id>`。結尾一律 `.md`。章名保留集數前綴（順序與「接下一章」靠它）。
+- 每章的 rf-id = `<slug>-<chapter.id>`（§1.2）。
+
+### 5.3 更新規則
+- plugin data `librarySync.chapters[rf-id] = { sha, fp }`：上次下載的遠端 `sha`，與我們寫進去的內容的**指紋** `fp`。
+- 指紋 = frontmatter **解析後的值**（排除插件自己寫的欄位：`rf-read`；用 Obsidian 的 `parseYaml`，所以寫 `rf-read` 造成的 YAML 重排不算修改）
+  ＋ 內文（換行統一、去行尾空白）的 hash。使用者改 frontmatter（例：加 tag）或內文都算修改。
+- 每章：本機沒有檔 → 寫入；本機指紋 = 上次寫的、遠端 `sha` 變了 → 覆蓋（例：那章念完多了時間戳）；本機被改過、遠端也變了 →
+  **不覆蓋**，面板標示「本機有修改，未更新：<章名>」並提供「覆蓋本機修改」（按兩次確認）；遠端沒變 → 不動。
+  檔案在但沒有紀錄（例：plugin data 遺失）→ 抓遠端比指紋，一樣就補紀錄，不一樣當成本機有修改。
+- 覆蓋時保留原本的 `rf-read`。使用者自己搬走或改名的章節，下次會在原位置重新下載一份（插件只看路徑）。
+- 書的列表狀態（不必先抓 book.json）：`librarySync.books[slug] = { updated, conflicts }`；
+  沒紀錄 = 未下載、`updated` 跟書庫不同 = 有更新、相同 = 已是最新。有章節失敗時 `updated` 記成空字串，下次仍顯示「有更新」。
+- 錯誤：404 →「書庫網址不對」；沒有回應 → 網路錯誤，面板有「重試」；單章失敗不影響其他章，列在結果裡。
