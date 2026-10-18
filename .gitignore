@@ -5,3 +5,5 @@ node_modules/
 data.json
 pipeline/data/ted_transcript.jsonl
 pipeline/data/ted_no_transcript.log
+private-podcast/
+.DS_Store

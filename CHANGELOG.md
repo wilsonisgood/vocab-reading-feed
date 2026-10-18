@@ -12,3 +12,8 @@ release notes（見 `.github/workflows/release.yml`），所以標題要一字�
 - 直接向 TED 串流原音（HLS），閱讀模式跟著段落高亮。
 - 懸浮圓鈕播放器：播放／暫停、上／下一段（自動跳過 (Applause) 這類舞台提示）、上／下一篇。
 - 自動切換閱讀模式、隱藏屬性區、已讀標記。
+
+
+## [0.1.6] - 2026-10-18
+
+private store
