@@ -1,7 +1,7 @@
 {
   "id": "reading-feed",
   "name": "Reading Feed",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "minAppVersion": "1.5.7",
   "description": "Browse TED talks, load them as notes with per-paragraph timestamps, and listen with follow-along highlighting.",
   "author": "will",
