@@ -1,3 +1,4 @@
 /* Entry for styles.css. Each feature adds its own file and an @import here. */
 @import "./reading.css";
 @import "./browser.css";
+@import "./history.css";

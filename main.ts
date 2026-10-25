@@ -34,6 +34,7 @@ export default class ReadingFeedPlugin extends Plugin {
     this.settings.favorites = [...this.settings.favorites];
     this.settings.noTranscript = [...this.settings.noTranscript];
     this.settings.dockPos = { ...DEFAULT_SETTINGS.dockPos, ...this.settings.dockPos };
+    this.settings.history = { ...this.settings.history };
     const sync = this.settings.librarySync;
     this.settings.librarySync = { chapters: { ...sync?.chapters }, books: { ...sync?.books } };
   }

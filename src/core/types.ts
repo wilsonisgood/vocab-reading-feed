@@ -93,7 +93,26 @@ export interface ReadingFeedSettings {
   libraryUrl: string;
   /** What "My books" last downloaded, to tell remote updates from the user's own edits (METHOD §5.3). */
   librarySync: LibrarySync;
+  /** Last plays per note path, newest first, at most `HISTORY_PER_NOTE` each (METHOD §3.5). */
+  history: Record<string, PlayRecord[]>;
 }
+
+/** One listening session of a note (METHOD §3.5). Paragraphs are timestamp ordinals, like `data-rf-idx`. */
+export interface PlayRecord {
+  /** Epoch ms when the session started. */
+  start: number;
+  /** Epoch ms of the last moment it was playing. */
+  end: number;
+  /** Lowest / highest paragraph reached. */
+  lo: number;
+  hi: number;
+  /** Paragraph playing when it stopped: picking the record resumes here. */
+  last: number;
+  /** Opening words of `last`. */
+  snippet: string;
+}
+
+export const HISTORY_PER_NOTE = 3;
 
 /** Bubble centre as fractions (0–1) of the reading view's width / height. */
 export interface DockPos {
@@ -113,6 +132,7 @@ export const DEFAULT_SETTINGS: ReadingFeedSettings = {
   dockPos: { desktop: null, mobile: null },
   libraryUrl: "",
   librarySync: { chapters: {}, books: {} },
+  history: {},
 };
 
 /** Frontmatter key set (YYYY-MM-DD) the first time any audio in the note plays (METHOD §1, §3.4). */

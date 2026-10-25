@@ -1,5 +1,5 @@
 // Reading-mode glue (METHOD §3): ▶ per paragraph, playback bar, follow-scroll.
-import { MarkdownView, Platform, TFile, type App, type HeadingCache, type Plugin, type MarkdownPostProcessorContext } from "obsidian";
+import { MarkdownView, Notice, Platform, TFile, type App, type HeadingCache, type Plugin, type MarkdownPostProcessorContext } from "obsidian";
 import type { HttpPort } from "../../core/ports";
 import { RF_READ_KEY, type ParagraphTime, type ReadingFeedSettings } from "../../core/types";
 import { parseTimestamps, readRfKey, timestampTexts } from "../../core/note/parse";
@@ -8,6 +8,9 @@ import { attachHls } from "../../services/player/hlsAttach";
 import { loadedKey } from "../../core/browser/logic";
 import { createBar, type Bar, type BarActions } from "./bar";
 import { afterEndNote, neighborNote, todayString, type NoteRef } from "./logic";
+import { HistoryRecorder } from "../../services/history/HistoryRecorder";
+import { groupHistory, removePath, renamePath, snippetOf } from "../../core/history/logic";
+import { HistoryModal } from "./historyModal";
 
 interface NoteInfo {
   mtime: number;
@@ -315,6 +318,7 @@ export function installReading(
         syncView(true);
       },
       stop: () => player.stop(),
+      history: () => openHistory(view),
       hasPrev: () => neighbor(-1) !== null,
       hasNext: () => neighbor(1) !== null,
       count: () => cache.get(targetFile(view)?.path ?? "")?.times.length ?? 0,
@@ -336,6 +340,55 @@ export function installReading(
         bars.forEach((b) => b.bar.update());
       },
     };
+  }
+
+  /** Play `path` from paragraph `idx` (synchronous: runs inside the tap) and show it in `view`. */
+  function resumeAt(view: MarkdownView, path: string, idx: number): void {
+    const file = fileAt(path);
+    if (!file) {
+      new Notice("找不到這篇筆記");
+      return;
+    }
+    const times = loadSync(file);
+    if (times === null) return;
+    if (times.length > 0) {
+      player.playFrom(Math.min(Math.max(idx, 0), times.length - 1));
+    } else {
+      // Table not cached yet: start now (iOS), move to the paragraph once it is read.
+      player.playStart();
+      void getInfo(file, rfFm(file) ?? undefined).then((info) => {
+        if (info && idx > 0 && player.notePath === path && info.times.length > 0) {
+          player.load(path, info.audioUrl, info.times);
+          player.seekTo(Math.min(idx, info.times.length - 1));
+        }
+      });
+    }
+    jumpToPlaying(view);
+  }
+
+  /** Play history panel (METHOD §3.5); notes that no longer exist are dropped first. */
+  function openHistory(view: MarkdownView): void {
+    const hist = getSettings().history;
+    let dropped = false;
+    for (const path of Object.keys(hist)) {
+      if (!fileAt(path)) dropped = removePath(hist, path) || dropped;
+    }
+    if (dropped) void saveSettings?.();
+    const folders = groupHistory(hist);
+    // Warm the timestamp tables so a pick can start playing at the right paragraph synchronously.
+    for (const f of folders) {
+      for (const n of f.notes) {
+        const file = fileAt(n.path);
+        if (file) void getInfo(file, rfFm(file) ?? undefined);
+      }
+    }
+    new HistoryModal(app, {
+      folders,
+      now: Date.now(),
+      focusPath: player.notePath ?? folders[0]?.notes[0]?.path ?? null,
+      title: (path) => noteTitle(fileAt(path)),
+      pick: (path, rec) => resumeAt(view, path, rec.last),
+    }).open();
   }
 
   function paraStep(view: MarkdownView, dir: -1 | 1): void {
@@ -485,6 +538,25 @@ export function installReading(
   );
   plugin.registerEvent(app.workspace.on("active-leaf-change", () => { warm(); refreshBars(); }));
   plugin.registerEvent(app.workspace.on("layout-change", refreshBars));
+
+  // Play history (METHOD §3.5): record sessions, follow renames and deletions.
+  const recorder = new HistoryRecorder({
+    player,
+    history: () => getSettings().history,
+    snippet: (path, idx) => snippetOf(cache.get(path)?.texts[idx] ?? ""),
+    save: () => void saveSettings?.(),
+  });
+  plugin.register(() => recorder.destroy());
+  plugin.registerEvent(
+    app.vault.on("rename", (f, oldPath) => {
+      if (renamePath(getSettings().history, oldPath, f.path)) void saveSettings?.();
+    }),
+  );
+  plugin.registerEvent(
+    app.vault.on("delete", (f) => {
+      if (removePath(getSettings().history, f.path)) void saveSettings?.();
+    }),
+  );
 
   // Manual scroll pauses following (METHOD §3.3).
   const onUserScroll = (e: Event) => {

@@ -38,6 +38,8 @@ export interface BarActions {
   jump(): void;
   resume(): void;
   stop(): void;
+  /** Open the play history panel (METHOD §3.5). */
+  history(): void;
   hasPrev(): boolean;
   hasNext(): boolean;
   /** Paragraph count of the target note (from cache when it is not the loaded one). */
@@ -96,6 +98,8 @@ export function createBar(player: PlayerService, path: string, a: BarActions): B
 
   more.addEventListener("click", (e) => {
     const m = new Menu();
+    m.addItem((i) => i.setTitle("播放歷史…").setIcon("history").onClick(() => a.history()));
+    m.addSeparator();
     for (const s of SPEEDS) {
       m.addItem((i) => i.setTitle(`${s}x`).setChecked(player.speed === s).onClick(() => player.setSpeed(s)));
     }

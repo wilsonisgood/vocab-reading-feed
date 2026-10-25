@@ -23,6 +23,7 @@ v1 目標：**TED、只串流**。面板列出 TED 演講（標題、講者、�
 | 鎖定畫面 ⏮⏭ 切篇（iPhone） | ✅ | 實機確認；「沒反應」是在最後一篇按 ⏭ → 改成頭尾繞回 |
 | V1-10 書的章節筆記（`rf-source: book`，METHOD §1.2） | ✅ | 程式＋測試完成；桌面＋iPhone 播 m4a、拖曳（Range）待實機 |
 | V1-11 我的書（從使用者自己的書庫下載章節，METHOD §5） | ✅ | 程式＋測試完成；對真的書庫實機下載／更新待驗 |
+| V1-12 播放歷史（METHOD §3.5，分支 `feat/play-history`） | ✅ | 程式＋測試完成；面板外觀（尤其是手機底部 sheet）、點一筆接著播待實機 |
 ## V1-0 插件骨架（主 session 自己做）
 - [x] 照 `../obsidian-vocab-tracker` 的工具鏈：`package.json` scripts（typecheck → lint → test → build = `npm run check`）、
       `tsconfig.json`、`esbuild.config.mjs`、`eslint.config.mjs`、`vitest.config.ts`、`version-bump.mjs`。

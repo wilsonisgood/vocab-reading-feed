@@ -23,11 +23,12 @@ __export(main_exports, {
   default: () => ReadingFeedPlugin
 });
 module.exports = __toCommonJS(main_exports);
-var import_obsidian7 = require("obsidian");
+var import_obsidian8 = require("obsidian");
 
 // src/core/types.ts
 var RF_SCHEMA = 2;
 var TED_LICENSE = "CC BY-NC-ND 4.0 \u2014 TED Conferences, LLC";
+var HISTORY_PER_NOTE = 3;
 var DEFAULT_SETTINGS = {
   folder: "Reading Feed",
   defaultSpeed: 1,
@@ -39,7 +40,8 @@ var DEFAULT_SETTINGS = {
   noTranscript: [],
   dockPos: { desktop: null, mobile: null },
   libraryUrl: "",
-  librarySync: { chapters: {}, books: {} }
+  librarySync: { chapters: {}, books: {} },
+  history: {}
 };
 var RF_READ_KEY = "rf-read";
 
@@ -1657,7 +1659,7 @@ var ReadingFeedSettingTab = class extends import_obsidian4.PluginSettingTab {
 };
 
 // src/ui/reading/installReading.ts
-var import_obsidian6 = require("obsidian");
+var import_obsidian7 = require("obsidian");
 
 // src/core/audio.ts
 function isHlsUrl(url) {
@@ -1932,7 +1934,7 @@ var PlayerService = class {
   }
 };
 
-// node_modules/hls.js/dist/hls.light.mjs
+// ../../../node_modules/hls.js/dist/hls.light.mjs
 var isFiniteNumber = Number.isFinite || function(value) {
   return typeof value === "number" && isFinite(value);
 };
@@ -25737,6 +25739,8 @@ function createBar(player, path, a) {
   jump.addEventListener("click", () => a.jump());
   more.addEventListener("click", (e) => {
     const m = new import_obsidian5.Menu();
+    m.addItem((i) => i.setTitle("\u64AD\u653E\u6B77\u53F2\u2026").setIcon("history").onClick(() => a.history()));
+    m.addSeparator();
     for (const s of SPEEDS) {
       m.addItem((i) => i.setTitle(`${s}x`).setChecked(player.speed === s).onClick(() => player.setSpeed(s)));
     }
@@ -25843,6 +25847,253 @@ function createBar(player, path, a) {
   return { el, update };
 }
 
+// src/core/history/logic.ts
+var SESSION_GAP_MS = 30 * 60 * 1e3;
+var SNIPPET_MAX = 60;
+var WEEKDAYS = ["\u65E5", "\u4E00", "\u4E8C", "\u4E09", "\u56DB", "\u4E94", "\u516D"];
+function canContinue(rec, now2) {
+  return rec !== void 0 && now2 >= rec.end && now2 - rec.end <= SESSION_GAP_MS;
+}
+function startRecord(hist, path, now2, idx, snippet) {
+  var _a;
+  const rec = { start: now2, end: now2, lo: idx, hi: idx, last: idx, snippet };
+  const list = (_a = hist[path]) != null ? _a : hist[path] = [];
+  list.unshift(rec);
+  list.length = Math.min(list.length, HISTORY_PER_NOTE);
+  return rec;
+}
+function touchRecord(rec, now2, idx, snippet) {
+  rec.end = Math.max(rec.end, now2);
+  if (idx < 0) return;
+  rec.lo = rec.lo < 0 ? idx : Math.min(rec.lo, idx);
+  rec.hi = Math.max(rec.hi, idx);
+  rec.last = idx;
+  rec.snippet = snippet;
+}
+function renamePath(hist, oldPath, newPath) {
+  let moved = false;
+  for (const key of Object.keys(hist)) {
+    let next = null;
+    if (key === oldPath) next = newPath;
+    else if (key.startsWith(`${oldPath}/`)) next = newPath + key.slice(oldPath.length);
+    if (next === null || next === key) continue;
+    hist[next] = hist[key];
+    delete hist[key];
+    moved = true;
+  }
+  return moved;
+}
+function removePath(hist, path) {
+  let removed = false;
+  for (const key of Object.keys(hist)) {
+    if (key === path || key.startsWith(`${path}/`)) {
+      delete hist[key];
+      removed = true;
+    }
+  }
+  return removed;
+}
+function snippetOf(text, max = SNIPPET_MAX) {
+  const t = text.replace(/\s+/g, " ").trim();
+  if (t.length <= max) return t;
+  const cut = t.slice(0, max);
+  const sp = cut.lastIndexOf(" ");
+  return `${(sp > max / 2 ? cut.slice(0, sp) : cut).replace(/[\s,.;:—-]+$/, "")}\u2026`;
+}
+function parentOf(path) {
+  const i = path.lastIndexOf("/");
+  return i < 0 ? "" : path.slice(0, i);
+}
+function nameOf(folder) {
+  return folder === "" ? "\uFF08\u6839\u76EE\u9304\uFF09" : folder.slice(folder.lastIndexOf("/") + 1);
+}
+function groupHistory(hist) {
+  var _a, _b, _c;
+  const byFolder = /* @__PURE__ */ new Map();
+  for (const [path, records] of Object.entries(hist)) {
+    if (records.length === 0) continue;
+    const note = { path, last: Math.max(...records.map((r) => r.end)), records };
+    const folder = parentOf(path);
+    const list = (_a = byFolder.get(folder)) != null ? _a : [];
+    list.push(note);
+    byFolder.set(folder, list);
+  }
+  const folders = [...byFolder].map(([folder, notes]) => {
+    notes.sort((a, b) => b.last - a.last);
+    return { folder, label: nameOf(folder), last: notes[0].last, notes };
+  });
+  const dup = /* @__PURE__ */ new Map();
+  for (const f of folders) dup.set(f.label, ((_b = dup.get(f.label)) != null ? _b : 0) + 1);
+  for (const f of folders) if (((_c = dup.get(f.label)) != null ? _c : 0) > 1 && f.folder !== "") f.label = f.folder;
+  return folders.sort((a, b) => b.last - a.last);
+}
+function midnight(d) {
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+}
+function weekStart(now2) {
+  const d = new Date(now2);
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate() - (d.getDay() + 6) % 7).getTime();
+}
+function isThisWeek(ms, now2) {
+  return ms >= weekStart(now2) && ms <= now2 + 6e4;
+}
+function hm(d) {
+  return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+}
+function whenLabel(ms, now2) {
+  const d = new Date(ms);
+  const n = new Date(now2);
+  const day = midnight(d);
+  if (day === midnight(n)) return `\u4ECA\u5929 ${hm(d)}`;
+  if (day === new Date(n.getFullYear(), n.getMonth(), n.getDate() - 1).getTime()) return `\u6628\u5929 ${hm(d)}`;
+  if (isThisWeek(ms, now2)) return `\u9031${WEEKDAYS[d.getDay()]} ${hm(d)}`;
+  if (d.getFullYear() === new Date(now2).getFullYear()) return `${d.getMonth() + 1}/${d.getDate()} ${hm(d)}`;
+  return `${d.getFullYear()}/${d.getMonth() + 1}/${d.getDate()}`;
+}
+function spanLabel(r, now2) {
+  const head = whenLabel(r.start, now2);
+  const s = new Date(r.start);
+  const e = new Date(r.end);
+  const sameDay = midnight(s) === midnight(e);
+  return sameDay && r.end - r.start >= 6e4 && head.includes(":") ? `${head}\u2013${hm(e)}` : head;
+}
+function rangeLabel(r) {
+  if (r.lo < 0) return "";
+  return r.lo === r.hi ? `\u7B2C ${r.lo + 1} \u6BB5` : `\u7B2C ${r.lo + 1}\u2013${r.hi + 1} \u6BB5`;
+}
+
+// src/services/history/HistoryRecorder.ts
+var SAVE_EVERY_MS = 15e3;
+var HistoryRecorder = class {
+  constructor(deps) {
+    this.deps = deps;
+    this.session = null;
+    this.wasPlaying = false;
+    this.lastSave = 0;
+    var _a, _b;
+    this.now = (_a = deps.now) != null ? _a : Date.now;
+    this.defer = (_b = deps.defer) != null ? _b : ((fn) => queueMicrotask(fn));
+    const p = deps.player;
+    this.offs = [
+      p.on("started", () => this.defer(() => this.begin())),
+      p.on("index", () => this.onIndex()),
+      p.on("state", () => this.onState())
+    ];
+  }
+  destroy() {
+    this.offs.forEach((off) => off());
+    this.offs = [];
+  }
+  begin() {
+    var _a;
+    const { player } = this.deps;
+    const path = player.notePath;
+    if (path === null) return;
+    const now2 = this.now();
+    const idx = player.currentIndex;
+    const snippet = this.snippetAt(path, idx);
+    if (((_a = this.session) == null ? void 0 : _a.path) === path && canContinue(this.session.rec, now2)) {
+      touchRecord(this.session.rec, now2, idx, snippet);
+    } else {
+      this.session = { path, rec: startRecord(this.deps.history(), path, now2, idx, snippet) };
+    }
+    this.wasPlaying = player.playing;
+    this.flush(now2);
+  }
+  onIndex() {
+    if (this.closeIfMoved()) return;
+    const { player } = this.deps;
+    if (!this.session || !player.playing) return;
+    const now2 = this.now();
+    if (!canContinue(this.session.rec, now2)) return;
+    touchRecord(this.session.rec, now2, player.currentIndex, this.snippetAt(this.session.path, player.currentIndex));
+    if (now2 - this.lastSave >= SAVE_EVERY_MS) this.flush(now2);
+  }
+  onState() {
+    if (this.closeIfMoved()) return;
+    const { player } = this.deps;
+    const playing = player.playing;
+    if (this.session && this.wasPlaying && !playing) {
+      const now2 = this.now();
+      touchRecord(this.session.rec, now2, player.currentIndex, this.snippetAt(this.session.path, player.currentIndex));
+      this.flush(now2);
+    }
+    this.wasPlaying = playing;
+  }
+  /** Stop or another note loaded: the session is over. */
+  closeIfMoved() {
+    if (!this.session || this.deps.player.notePath === this.session.path) return false;
+    if (this.wasPlaying) this.session.rec.end = Math.max(this.session.rec.end, this.now());
+    this.session = null;
+    this.wasPlaying = false;
+    this.flush(this.now());
+    return true;
+  }
+  snippetAt(path, idx) {
+    return idx < 0 ? "" : this.deps.snippet(path, idx);
+  }
+  flush(now2) {
+    this.lastSave = now2;
+    this.deps.save();
+  }
+};
+
+// src/ui/reading/historyModal.ts
+var import_obsidian6 = require("obsidian");
+var HistoryModal = class extends import_obsidian6.Modal {
+  constructor(app, deps) {
+    super(app);
+    this.deps = deps;
+  }
+  onOpen() {
+    const { folders, now: now2, focusPath } = this.deps;
+    this.modalEl.addClass("rf-history-modal");
+    this.titleEl.setText("\u64AD\u653E\u6B77\u53F2");
+    const root = this.contentEl.createDiv("rf-history");
+    if (folders.length === 0) {
+      root.createDiv({ cls: "rf-history-empty", text: "\u9084\u6C92\u6709\u64AD\u653E\u7D00\u9304" });
+      return;
+    }
+    let focusEl = null;
+    for (const f of folders) {
+      const open = focusPath !== null && f.notes.some((n) => n.path === focusPath);
+      const box = root.createDiv({ cls: ["rf-history-folder", open ? "is-open" : ""] });
+      const head = box.createEl("button", { cls: "rf-history-folder-head" });
+      const chev = head.createSpan("rf-history-chev");
+      (0, import_obsidian6.setIcon)(chev, "chevron-right");
+      head.createSpan({ cls: "rf-history-folder-name", text: f.label });
+      head.createSpan({ cls: ["rf-history-when", isThisWeek(f.last, now2) ? "is-week" : ""], text: whenLabel(f.last, now2) });
+      head.addEventListener("click", () => box.toggleClass("is-open", !box.hasClass("is-open")));
+      const body = box.createDiv("rf-history-folder-body");
+      for (const n of f.notes) {
+        const note = body.createDiv("rf-history-note");
+        const nh = note.createDiv("rf-history-note-head");
+        if (isThisWeek(n.last, now2)) nh.createSpan({ cls: "rf-history-dot", attr: { "aria-label": "\u672C\u9031\u8B80\u904E" } });
+        nh.createSpan({ cls: "rf-history-note-title", text: this.deps.title(n.path) });
+        if (n.path === focusPath) {
+          note.addClass("is-focus");
+          focusEl = note;
+        }
+        for (const r of n.records) {
+          const row = note.createEl("button", { cls: "rf-history-rec" });
+          const range = rangeLabel(r);
+          row.createDiv({ cls: "rf-history-rec-meta", text: range ? `${spanLabel(r, now2)} \xB7 ${range}` : spanLabel(r, now2) });
+          if (r.snippet) row.createDiv({ cls: "rf-history-rec-snippet", text: r.snippet });
+          row.addEventListener("click", () => {
+            this.deps.pick(n.path, r);
+            this.close();
+          });
+        }
+      }
+    }
+    const target = focusEl;
+    if (target) window.requestAnimationFrame(() => target.scrollIntoView({ block: "nearest" }));
+  }
+  onClose() {
+    this.contentEl.empty();
+  }
+};
+
 // src/ui/reading/installReading.ts
 function createPlayer(plugin, http, getSettings) {
   const player = new PlayerService({
@@ -25857,7 +26108,7 @@ function createPlayer(plugin, http, getSettings) {
 function nowPlaying(app, player) {
   var _a;
   const f = player.notePath === null ? null : app.vault.getAbstractFileByPath(player.notePath);
-  if (!(f instanceof import_obsidian6.TFile)) return null;
+  if (!(f instanceof import_obsidian7.TFile)) return null;
   const k = readRfKey((_a = app.metadataCache.getFileCache(f)) == null ? void 0 : _a.frontmatter);
   return k ? { key: loadedKey(k.source, k.id), playing: player.playing } : null;
 }
@@ -25881,7 +26132,7 @@ function installReading(plugin, player, getSettings, saveSettings) {
     if (path === null) return [];
     return app.workspace.getLeavesOfType("markdown").map((l) => l.view).filter((v) => {
       var _a;
-      return v instanceof import_obsidian6.MarkdownView && ((_a = v.file) == null ? void 0 : _a.path) === path;
+      return v instanceof import_obsidian7.MarkdownView && ((_a = v.file) == null ? void 0 : _a.path) === path;
     });
   }
   function unfoldSectionOf(view2, line) {
@@ -25951,7 +26202,7 @@ function installReading(plugin, player, getSettings, saveSettings) {
     var _a, _b;
     const out = [];
     for (const c of (_b = (_a = file.parent) == null ? void 0 : _a.children) != null ? _b : []) {
-      if (!(c instanceof import_obsidian6.TFile) || c.extension !== "md") continue;
+      if (!(c instanceof import_obsidian7.TFile) || c.extension !== "md") continue;
       const fm = rfFm(c);
       if (fm && hasAudio(fm)) out.push({ path: c.path, name: c.name, published: fm["published"] });
     }
@@ -25962,7 +26213,7 @@ function installReading(plugin, player, getSettings, saveSettings) {
     if (!file) return;
     const n = neighborNote(siblings(file), file.path, dir);
     const target = n && app.vault.getAbstractFileByPath(n.path);
-    if (!(target instanceof import_obsidian6.TFile)) return;
+    if (!(target instanceof import_obsidian7.TFile)) return;
     startNote(target);
     void view2.leaf.openFile(target);
   }
@@ -26042,7 +26293,7 @@ function installReading(plugin, player, getSettings, saveSettings) {
   }
   function fileAt(path) {
     const f = path === null ? null : app.vault.getAbstractFileByPath(path);
-    return f instanceof import_obsidian6.TFile ? f : null;
+    return f instanceof import_obsidian7.TFile ? f : null;
   }
   function targetFile(view2) {
     var _a;
@@ -26101,6 +26352,7 @@ function installReading(plugin, player, getSettings, saveSettings) {
         syncView(true);
       },
       stop: () => player.stop(),
+      history: () => openHistory(view2),
       hasPrev: () => neighbor(-1) !== null,
       hasNext: () => neighbor(1) !== null,
       count: () => {
@@ -26119,13 +26371,58 @@ function installReading(plugin, player, getSettings, saveSettings) {
           elsewhere: player.notePath !== null && player.notePath !== ((_d = view2.file) == null ? void 0 : _d.path)
         };
       },
-      getPos: () => getSettings().dockPos[import_obsidian6.Platform.isMobile ? "mobile" : "desktop"],
+      getPos: () => getSettings().dockPos[import_obsidian7.Platform.isMobile ? "mobile" : "desktop"],
       setPos: (p) => {
-        getSettings().dockPos[import_obsidian6.Platform.isMobile ? "mobile" : "desktop"] = p;
+        getSettings().dockPos[import_obsidian7.Platform.isMobile ? "mobile" : "desktop"] = p;
         void (saveSettings == null ? void 0 : saveSettings());
         bars.forEach((b) => b.bar.update());
       }
     };
+  }
+  function resumeAt(view2, path, idx) {
+    var _a;
+    const file = fileAt(path);
+    if (!file) {
+      new import_obsidian7.Notice("\u627E\u4E0D\u5230\u9019\u7BC7\u7B46\u8A18");
+      return;
+    }
+    const times = loadSync(file);
+    if (times === null) return;
+    if (times.length > 0) {
+      player.playFrom(Math.min(Math.max(idx, 0), times.length - 1));
+    } else {
+      player.playStart();
+      void getInfo(file, (_a = rfFm(file)) != null ? _a : void 0).then((info) => {
+        if (info && idx > 0 && player.notePath === path && info.times.length > 0) {
+          player.load(path, info.audioUrl, info.times);
+          player.seekTo(Math.min(idx, info.times.length - 1));
+        }
+      });
+    }
+    jumpToPlaying(view2);
+  }
+  function openHistory(view2) {
+    var _a, _b, _c, _d, _e;
+    const hist = getSettings().history;
+    let dropped = false;
+    for (const path of Object.keys(hist)) {
+      if (!fileAt(path)) dropped = removePath(hist, path) || dropped;
+    }
+    if (dropped) void (saveSettings == null ? void 0 : saveSettings());
+    const folders = groupHistory(hist);
+    for (const f of folders) {
+      for (const n of f.notes) {
+        const file = fileAt(n.path);
+        if (file) void getInfo(file, (_a = rfFm(file)) != null ? _a : void 0);
+      }
+    }
+    new HistoryModal(app, {
+      folders,
+      now: Date.now(),
+      focusPath: (_e = (_d = player.notePath) != null ? _d : (_c = (_b = folders[0]) == null ? void 0 : _b.notes[0]) == null ? void 0 : _c.path) != null ? _e : null,
+      title: (path) => noteTitle(fileAt(path)),
+      pick: (path, rec) => resumeAt(view2, path, rec.last)
+    }).open();
   }
   function paraStep(view2, dir) {
     if (player.notePath === null && (!view2.file || loadSync(view2.file) === null)) return;
@@ -26136,7 +26433,7 @@ function installReading(plugin, player, getSettings, saveSettings) {
     const seen = /* @__PURE__ */ new Set();
     for (const leaf of app.workspace.getLeavesOfType("markdown")) {
       const view2 = leaf.view;
-      if (!(view2 instanceof import_obsidian6.MarkdownView)) continue;
+      if (!(view2 instanceof import_obsidian7.MarkdownView)) continue;
       const fm = rfFm(view2.file);
       view2.containerEl.toggleClass("rf-note", fm !== null);
       if (!fm || !hasAudio(fm) || view2.getMode() !== "preview") continue;
@@ -26164,7 +26461,7 @@ function installReading(plugin, player, getSettings, saveSettings) {
   function tryAutoPreview(file) {
     var _a;
     if (!file || !getSettings().autoReadingMode || !rfFm(file)) return;
-    const view2 = app.workspace.getActiveViewOfType(import_obsidian6.MarkdownView);
+    const view2 = app.workspace.getActiveViewOfType(import_obsidian7.MarkdownView);
     if (!view2 || ((_a = view2.file) == null ? void 0 : _a.path) !== file.path || autoDone.get(view2.leaf) === file.path) return;
     autoDone.set(view2.leaf, file.path);
     if (view2.getMode() === "preview") return;
@@ -26177,7 +26474,7 @@ function installReading(plugin, player, getSettings, saveSettings) {
     if (path === null || readMarked.has(path)) return;
     readMarked.add(path);
     const file = app.vault.getAbstractFileByPath(path);
-    if (file instanceof import_obsidian6.TFile) {
+    if (file instanceof import_obsidian7.TFile) {
       void app.fileManager.processFrontMatter(file, (fm) => {
         var _a, _b;
         (_b = fm[_a = RF_READ_KEY]) != null ? _b : fm[_a] = todayString();
@@ -26218,7 +26515,7 @@ function installReading(plugin, player, getSettings, saveSettings) {
     var _a;
     if (!readRfKey(ctx.frontmatter)) return;
     const file = app.vault.getAbstractFileByPath(ctx.sourcePath);
-    if (!(file instanceof import_obsidian6.TFile)) return;
+    if (!(file instanceof import_obsidian7.TFile)) return;
     const info = await getInfo(file, ctx.frontmatter);
     const sec = ctx.getSectionInfo(el);
     if (!info || !sec) return;
@@ -26268,6 +26565,26 @@ function installReading(plugin, player, getSettings, saveSettings) {
     refreshBars();
   }));
   plugin.registerEvent(app.workspace.on("layout-change", refreshBars));
+  const recorder = new HistoryRecorder({
+    player,
+    history: () => getSettings().history,
+    snippet: (path, idx) => {
+      var _a, _b;
+      return snippetOf((_b = (_a = cache.get(path)) == null ? void 0 : _a.texts[idx]) != null ? _b : "");
+    },
+    save: () => void (saveSettings == null ? void 0 : saveSettings())
+  });
+  plugin.register(() => recorder.destroy());
+  plugin.registerEvent(
+    app.vault.on("rename", (f, oldPath) => {
+      if (renamePath(getSettings().history, oldPath, f.path)) void (saveSettings == null ? void 0 : saveSettings());
+    })
+  );
+  plugin.registerEvent(
+    app.vault.on("delete", (f) => {
+      if (removePath(getSettings().history, f.path)) void (saveSettings == null ? void 0 : saveSettings());
+    })
+  );
   const onUserScroll = (e) => {
     const t = e.target;
     if (!(t instanceof Node) || player.notePath === null) return;
@@ -26310,7 +26627,7 @@ function installReading(plugin, player, getSettings, saveSettings) {
 }
 
 // main.ts
-var ReadingFeedPlugin = class extends import_obsidian7.Plugin {
+var ReadingFeedPlugin = class extends import_obsidian8.Plugin {
   constructor() {
     super(...arguments);
     this.settings = { ...DEFAULT_SETTINGS };
@@ -26336,6 +26653,7 @@ var ReadingFeedPlugin = class extends import_obsidian7.Plugin {
     this.settings.favorites = [...this.settings.favorites];
     this.settings.noTranscript = [...this.settings.noTranscript];
     this.settings.dockPos = { ...DEFAULT_SETTINGS.dockPos, ...this.settings.dockPos };
+    this.settings.history = { ...this.settings.history };
     const sync = this.settings.librarySync;
     this.settings.librarySync = { chapters: { ...sync == null ? void 0 : sync.chapters }, books: { ...sync == null ? void 0 : sync.books } };
   }
