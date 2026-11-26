@@ -4,7 +4,7 @@ import type { Talk } from "../../core/types";
 import { buildVideosQuery, parseVideosResponse } from "../../core/ted/graphql";
 import type { VideosPage } from "../../core/ted/graphql";
 import { pickAudioUri } from "../../core/ted/m3u8";
-import { parseTalkPage } from "../../core/ted/talkPage";
+import { parseTalkImages, parseTalkPage } from "../../core/ted/talkPage";
 
 const GRAPHQL_URL = "https://www.ted.com/graphql";
 
@@ -80,5 +80,10 @@ export class TedClient {
     const { meta, paragraphs, masterUrl } = parseTalkPage(html, slug);
     const master = await this.getText(masterUrl);
     return { meta, paragraphs, audioUrl: pickAudioUri(master, masterUrl) };
+  }
+
+  /** Cover / thumbnail only (one page fetch, no playlist): backfill for older notes (METHOD §3.6). */
+  async fetchImages(slug: string): Promise<{ cover: string | null; thumbnail: string | null }> {
+    return parseTalkImages(await this.getText(`https://www.ted.com/talks/${slug}`));
   }
 }

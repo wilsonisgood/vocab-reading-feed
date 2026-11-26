@@ -7,7 +7,7 @@ import { PlayerService } from "../../services/player/PlayerService";
 import { attachHls } from "../../services/player/hlsAttach";
 import { loadedKey } from "../../core/browser/logic";
 import { createBar, type Bar, type BarActions } from "./bar";
-import { afterEndNote, neighborNote, todayString, type NoteRef } from "./logic";
+import { afterEndNote, bannerInfo, neighborNote, todayString, type NoteRef } from "./logic";
 import { HistoryRecorder } from "../../services/history/HistoryRecorder";
 import { groupHistory, removePath, renamePath, snippetOf } from "../../core/history/logic";
 import { HistoryModal } from "./historyModal";
@@ -44,6 +44,8 @@ export function installReading(
   player: PlayerService,
   getSettings: () => ReadingFeedSettings,
   saveSettings?: () => Promise<void>,
+  /** TED talk page → cover, to fill in notes saved without one (METHOD §3.6). */
+  fetchImages?: (slug: string) => Promise<{ cover: string | null; thumbnail: string | null }>,
 ): void {
   const app = plugin.app;
   const cache = new Map<string, NoteInfo>();
@@ -396,6 +398,57 @@ export function installReading(
     player.step(dir);
   }
 
+  /**
+   * Top banner from `cover` (METHOD §3.6), first child of the reading view's `.mod-header` (above the
+   * inline title). Not the sizer: the renderer drops foreign sizer children on scroll / note switch;
+   * the header survives both, so a stale banner is swapped by key.
+   */
+  function syncBanner(view: MarkdownView, fm: Record<string, unknown> | null, retry = true): void {
+    const header = view.previewMode.containerEl.querySelector<HTMLElement>(".mod-header");
+    const old = view.previewMode.containerEl.querySelector<HTMLElement>(".rf-banner");
+    const info = fm && view.file ? bannerInfo(fm, view.file.basename) : null;
+    const key = info ? JSON.stringify(info) : "";
+    if (old && (old.dataset.rfKey !== key || old.parentElement !== header)) old.remove();
+    view.containerEl.toggleClass("rf-has-banner", info !== null && header !== null);
+    if (!info || (old?.isConnected && old.parentElement === header && old.dataset.rfKey === key)) return;
+    if (!header) {
+      // Freshly opened view: the header is drawn a moment later.
+      if (retry) window.setTimeout(() => syncBanner(view, rfFm(view.file), false), 300);
+      return;
+    }
+    const el = createDiv({ cls: "rf-banner", attr: { "data-rf-key": key } });
+    const img = el.createEl("img", { cls: "rf-banner-img", attr: { src: info.src, alt: "", referrerpolicy: "no-referrer" } });
+    img.addEventListener("error", () => {
+      // Offline or gone: no empty frame, show the normal title again.
+      el.remove();
+      view.containerEl.removeClass("rf-has-banner");
+    });
+    const text = el.createDiv({ cls: "rf-banner-text" });
+    text.createDiv({ cls: "rf-banner-title", text: info.title });
+    if (info.sub) text.createDiv({ cls: "rf-banner-sub", text: info.sub });
+    header.prepend(el);
+  }
+
+  /** Older TED notes without `cover`: read it from the talk page once and write it in (METHOD §3.6). */
+  const backfillTried = new Set<string>();
+  function backfillCover(file: TFile, fm: Record<string, unknown>): void {
+    if (!fetchImages || fm["rf-source"] !== "ted" || fmString(fm, "cover") !== "") return;
+    const slug = fmString(fm, "rf-id");
+    if (slug === "" || backfillTried.has(file.path)) return;
+    backfillTried.add(file.path);
+    void fetchImages(slug)
+      .then((img) => {
+        if (!img.cover) return;
+        return app.fileManager.processFrontMatter(file, (f: Record<string, unknown>) => {
+          f["cover"] ??= img.cover;
+          if (img.thumbnail) f["thumbnail"] ??= img.thumbnail;
+        });
+      })
+      .catch(() => {
+        // Offline or TED changed: try again next time the plugin loads; the note still works without a banner.
+      });
+  }
+
   /** Floating dock on every rf note in reading mode; `rf-note` class hides the properties block. */
   function refreshBars(): void {
     const seen = new Set<MarkdownView>();
@@ -404,6 +457,8 @@ export function installReading(
       if (!(view instanceof MarkdownView)) continue;
       const fm = rfFm(view.file);
       view.containerEl.toggleClass("rf-note", fm !== null);
+      syncBanner(view, fm);
+      if (fm && view.file) backfillCover(view.file, fm);
       if (!fm || !hasAudio(fm) || view.getMode() !== "preview") continue;
       seen.add(view);
       let entry = bars.get(view);
@@ -597,7 +652,10 @@ export function installReading(
     if (media) media.metadata = null;
     bars.forEach((b) => b.bar.el.remove());
     bars.clear();
-    app.workspace.getLeavesOfType("markdown").forEach((l) => l.view.containerEl.removeClass("rf-note"));
+    app.workspace.getLeavesOfType("markdown").forEach((l) => {
+      l.view.containerEl.removeClass("rf-note", "rf-has-banner");
+      l.view.containerEl.querySelectorAll(".rf-banner").forEach((b) => b.remove());
+    });
   });
   app.workspace.onLayoutReady(refreshBars);
 }

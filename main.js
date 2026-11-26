@@ -139,6 +139,13 @@ function extractNextData(html) {
   if (!m) throw new Error("talk page has no __NEXT_DATA__");
   return JSON.parse(m[1]);
 }
+function parseTalkImages(html) {
+  var _a, _b, _c;
+  const video = (_c = (_b = (_a = extractNextData(html)) == null ? void 0 : _a.props) == null ? void 0 : _b.pageProps) == null ? void 0 : _c.videoData;
+  if (!video) return { cover: null, thumbnail: null };
+  const { cover, thumbnail } = summaryFromNode(video);
+  return { cover, thumbnail };
+}
 function parseTalkPage(html, slug) {
   var _a, _b, _c, _d, _e, _f;
   const props = (_b = (_a = extractNextData(html)) == null ? void 0 : _a.props) == null ? void 0 : _b.pageProps;
@@ -222,6 +229,10 @@ var TedClient = class {
     const { meta, paragraphs, masterUrl } = parseTalkPage(html, slug);
     const master = await this.getText(masterUrl);
     return { meta, paragraphs, audioUrl: pickAudioUri(master, masterUrl) };
+  }
+  /** Cover / thumbnail only (one page fetch, no playlist): backfill for older notes (METHOD §3.6). */
+  async fetchImages(slug) {
+    return parseTalkImages(await this.getText(`https://www.ted.com/talks/${slug}`));
   }
 };
 
@@ -25698,6 +25709,19 @@ function clampDock(px, py, w, h, r) {
 function cardSide(p) {
   return { left: p.x >= 0.5, up: p.y >= 0.5 };
 }
+var RESIZER = "https://pi.tedcdn.com/r/";
+function bannerInfo(fm, fallbackTitle) {
+  const cover = fm == null ? void 0 : fm["cover"];
+  if (typeof cover !== "string" || !/^https?:\/\//.test(cover)) return null;
+  const src = cover.startsWith(RESIZER) && !/[?&]w=/.test(cover) ? `${cover}${cover.includes("?") ? "&" : "?"}w=1200` : cover;
+  const str2 = (k) => typeof (fm == null ? void 0 : fm[k]) === "string" ? fm[k].trim() : "";
+  const title = str2("title") || fallbackTitle;
+  const who = str2("speaker") || str2("author");
+  const day = pubKey(fm == null ? void 0 : fm["published"]);
+  const dur = fm == null ? void 0 : fm["duration"];
+  const parts = [who, day, typeof dur === "number" && dur > 0 ? formatDuration(dur) : ""].filter((x) => x !== "");
+  return { src, title, sub: parts.join(" \xB7 ") };
+}
 
 // src/ui/reading/bar.ts
 var SPEEDS = [0.75, 1, 1.25, 1.5];
@@ -26112,7 +26136,7 @@ function nowPlaying(app, player) {
   const k = readRfKey((_a = app.metadataCache.getFileCache(f)) == null ? void 0 : _a.frontmatter);
   return k ? { key: loadedKey(k.source, k.id), playing: player.playing } : null;
 }
-function installReading(plugin, player, getSettings, saveSettings) {
+function installReading(plugin, player, getSettings, saveSettings, fetchImages) {
   const app = plugin.app;
   const cache = /* @__PURE__ */ new Map();
   const bars = /* @__PURE__ */ new Map();
@@ -26428,6 +26452,45 @@ function installReading(plugin, player, getSettings, saveSettings) {
     if (player.notePath === null && (!view2.file || loadSync(view2.file) === null)) return;
     player.step(dir);
   }
+  function syncBanner(view2, fm, retry = true) {
+    const header = view2.previewMode.containerEl.querySelector(".mod-header");
+    const old = view2.previewMode.containerEl.querySelector(".rf-banner");
+    const info = fm && view2.file ? bannerInfo(fm, view2.file.basename) : null;
+    const key = info ? JSON.stringify(info) : "";
+    if (old && (old.dataset.rfKey !== key || old.parentElement !== header)) old.remove();
+    view2.containerEl.toggleClass("rf-has-banner", info !== null && header !== null);
+    if (!info || (old == null ? void 0 : old.isConnected) && old.parentElement === header && old.dataset.rfKey === key) return;
+    if (!header) {
+      if (retry) window.setTimeout(() => syncBanner(view2, rfFm(view2.file), false), 300);
+      return;
+    }
+    const el = createDiv({ cls: "rf-banner", attr: { "data-rf-key": key } });
+    const img = el.createEl("img", { cls: "rf-banner-img", attr: { src: info.src, alt: "", referrerpolicy: "no-referrer" } });
+    img.addEventListener("error", () => {
+      el.remove();
+      view2.containerEl.removeClass("rf-has-banner");
+    });
+    const text = el.createDiv({ cls: "rf-banner-text" });
+    text.createDiv({ cls: "rf-banner-title", text: info.title });
+    if (info.sub) text.createDiv({ cls: "rf-banner-sub", text: info.sub });
+    header.prepend(el);
+  }
+  const backfillTried = /* @__PURE__ */ new Set();
+  function backfillCover(file, fm) {
+    if (!fetchImages || fm["rf-source"] !== "ted" || fmString(fm, "cover") !== "") return;
+    const slug = fmString(fm, "rf-id");
+    if (slug === "" || backfillTried.has(file.path)) return;
+    backfillTried.add(file.path);
+    void fetchImages(slug).then((img) => {
+      if (!img.cover) return;
+      return app.fileManager.processFrontMatter(file, (f) => {
+        var _a, _b;
+        (_a = f["cover"]) != null ? _a : f["cover"] = img.cover;
+        if (img.thumbnail) (_b = f["thumbnail"]) != null ? _b : f["thumbnail"] = img.thumbnail;
+      });
+    }).catch(() => {
+    });
+  }
   function refreshBars() {
     var _a, _b, _c, _d, _e;
     const seen = /* @__PURE__ */ new Set();
@@ -26436,6 +26499,8 @@ function installReading(plugin, player, getSettings, saveSettings) {
       if (!(view2 instanceof import_obsidian7.MarkdownView)) continue;
       const fm = rfFm(view2.file);
       view2.containerEl.toggleClass("rf-note", fm !== null);
+      syncBanner(view2, fm);
+      if (fm && view2.file) backfillCover(view2.file, fm);
       if (!fm || !hasAudio(fm) || view2.getMode() !== "preview") continue;
       seen.add(view2);
       let entry = bars.get(view2);
@@ -26621,7 +26686,10 @@ function installReading(plugin, player, getSettings, saveSettings) {
     if (media) media.metadata = null;
     bars.forEach((b) => b.bar.el.remove());
     bars.clear();
-    app.workspace.getLeavesOfType("markdown").forEach((l) => l.view.containerEl.removeClass("rf-note"));
+    app.workspace.getLeavesOfType("markdown").forEach((l) => {
+      l.view.containerEl.removeClass("rf-note", "rf-has-banner");
+      l.view.containerEl.querySelectorAll(".rf-banner").forEach((b) => b.remove());
+    });
   });
   app.workspace.onLayoutReady(refreshBars);
 }
@@ -26636,8 +26704,9 @@ var ReadingFeedPlugin = class extends import_obsidian8.Plugin {
     await this.loadSettings();
     const http = new ObsidianHttp();
     const player = createPlayer(this, http, () => this.settings);
-    installReading(this, player, () => this.settings, () => this.saveSettings());
-    installBrowser(this, new TedClient(http), () => this.settings, () => this.saveSettings(), {
+    const ted = new TedClient(http);
+    installReading(this, player, () => this.settings, () => this.saveSettings(), (slug) => ted.fetchImages(slug));
+    installBrowser(this, ted, () => this.settings, () => this.saveSettings(), {
       nowPlaying: () => nowPlaying(this.app, player),
       onPlayerChange: (cb) => {
         const offs = [player.on("state", cb), player.on("index", cb)];

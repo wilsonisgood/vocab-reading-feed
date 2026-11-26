@@ -15,8 +15,9 @@ export default class ReadingFeedPlugin extends Plugin {
     await this.loadSettings();
     const http = new ObsidianHttp();
     const player = createPlayer(this, http, () => this.settings);
-    installReading(this, player, () => this.settings, () => this.saveSettings());
-    installBrowser(this, new TedClient(http), () => this.settings, () => this.saveSettings(), {
+    const ted = new TedClient(http);
+    installReading(this, player, () => this.settings, () => this.saveSettings(), (slug) => ted.fetchImages(slug));
+    installBrowser(this, ted, () => this.settings, () => this.saveSettings(), {
       nowPlaying: () => nowPlaying(this.app, player),
       onPlayerChange: (cb) => {
         const offs = [player.on("state", cb), player.on("index", cb)];

@@ -56,3 +56,26 @@
   border-radius: 4px;
 }
 .rf-play-section { vertical-align: middle; font-size: 0.5em; margin: 0 0 0 8px; }
+/* Top banner from `cover` (METHOD §3.6): image, dark fade at the bottom, title + speaker over it. */
+.rf-banner {
+  position: relative; overflow: hidden; border-radius: 10px;
+  aspect-ratio: 21 / 9; max-height: 280px; width: 100%;
+  margin: 0 0 1.2em; background: var(--background-secondary);
+}
+.rf-banner-img {
+  position: absolute; inset: 0; width: 100%; height: 100%;
+  object-fit: cover; object-position: center 30%; display: block;
+}
+.rf-banner::after {
+  content: ""; position: absolute; inset: 0; pointer-events: none;
+  background: linear-gradient(to bottom, rgba(0, 0, 0, 0) 35%, rgba(0, 0, 0, 0.75) 100%);
+}
+.rf-banner-text { position: absolute; z-index: 1; left: 16px; right: 16px; bottom: 12px; color: #ffffff; }
+.rf-banner-title {
+  font-size: 1.5em; font-weight: 700; line-height: 1.2; text-shadow: 0 1px 3px rgba(0, 0, 0, 0.6);
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.rf-banner-sub { margin-top: 4px; font-size: var(--font-ui-small); opacity: 0.9; font-variant-numeric: tabular-nums; }
+.is-mobile .rf-banner-title { font-size: 1.2em; }
+/* The banner already shows the title. */
+.rf-has-banner .markdown-reading-view .inline-title { display: none; }

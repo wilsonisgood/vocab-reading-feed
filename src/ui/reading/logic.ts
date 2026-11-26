@@ -1,5 +1,6 @@
 // Pure helpers for the floating bar (METHOD §3.1, §3.4): no DOM, no obsidian.
 import type { AfterEnd, DockPos } from "../../core/types";
+import { formatDuration } from "../../core/browser/logic";
 
 export interface NoteRef {
   path: string;
@@ -69,4 +70,28 @@ export function clampDock(px: number, py: number, w: number, h: number, r: numbe
 /** Card opens toward the roomier side: leftward when the bubble is on the right half, upward on the lower half. */
 export function cardSide(p: DockPos): { left: boolean; up: boolean } {
   return { left: p.x >= 0.5, up: p.y >= 0.5 };
+}
+
+export interface BannerInfo {
+  /** Background image URL (TED's resizer at 1200 px when the cover is on it). */
+  src: string;
+  title: string;
+  /** "speaker · YYYY-MM-DD · mm:ss", parts that are missing left out. */
+  sub: string;
+}
+
+const RESIZER = "https://pi.tedcdn.com/r/";
+
+/** Top banner of a note in reading mode (METHOD §3.6); null when the note has no `cover`. */
+export function bannerInfo(fm: Record<string, unknown> | null | undefined, fallbackTitle: string): BannerInfo | null {
+  const cover = fm?.["cover"];
+  if (typeof cover !== "string" || !/^https?:\/\//.test(cover)) return null;
+  const src = cover.startsWith(RESIZER) && !/[?&]w=/.test(cover) ? `${cover}${cover.includes("?") ? "&" : "?"}w=1200` : cover;
+  const str = (k: string) => (typeof fm?.[k] === "string" ? (fm[k] as string).trim() : "");
+  const title = str("title") || fallbackTitle;
+  const who = str("speaker") || str("author");
+  const day = pubKey(fm?.["published"]);
+  const dur = fm?.["duration"];
+  const parts = [who, day, typeof dur === "number" && dur > 0 ? formatDuration(dur) : ""].filter((x) => x !== "");
+  return { src, title, sub: parts.join(" · ") };
 }

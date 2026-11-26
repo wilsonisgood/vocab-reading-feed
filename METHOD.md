@@ -229,6 +229,15 @@ POST https://www.ted.com/graphql   content-type: application/json
 - **點一筆**：在點擊當下同步開始播放，從那次停下的那一段接著播（§3.2 的 iOS 規則）。然後開啟該筆記，或切到已經開著它的分頁。
   時間戳表會在打開面板時預先讀好。萬一還沒讀好，就先從頭播，讀到之後再跳到那一段。
 
+### 3.6 頂部橫幅（2026-11-26 使用者訂定）
+- 閱讀模式最上方顯示 `cover` 當背景的橫幅，疊底部漸層＋標題、`speaker`（書用 `author`）· `published` · 長度；
+  有橫幅時隱藏 inline title（橫幅已有標題）。沒有 `cover`（例：書）就不顯示，也不留空框。
+- 圖片只用網址、使用者端直接向 TED CDN 要，⛔ 不下載、不存進 vault（憲法 1）。`pi.tedcdn.com/r/` 的網址加 `?w=1200`。
+- 掛在閱讀視圖的 `.mod-header` 第一個子元素：⛔ 不放 `.markdown-preview-sizer`（捲動／換筆記時會被清掉，見 PITFALLS）。
+- 圖片載入失敗（離線、圖不見了）→ 拿掉橫幅、恢復 inline title。
+- 補做：`rf-source: ted` 但沒有 `cover` 的舊筆記，打開時抓一次 talk 頁（`TedClient.fetchImages`），
+  用 `processFrontMatter` 補寫 `cover`／`thumbnail`（§1 已有的欄位，不改格式合約）；失敗就等下次插件載入再試。
+
 ## 4. （之後）BBC 時間戳管線
 
 v1 不做。設計保留在 git 歷史 `ed3a6c8` 的 METHOD.md（段落切法、指紋 fp、時間戳 JSON、whisper 對齊、驗收門檻），

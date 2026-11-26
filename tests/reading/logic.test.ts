@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { afterEndNote, cardSide, clampDock, neighborNote, sortNotes, todayString } from "../../src/ui/reading/logic";
+import { afterEndNote, bannerInfo, cardSide, clampDock, neighborNote, sortNotes, todayString } from "../../src/ui/reading/logic";
 
 const n = (name: string, published: unknown) => ({ path: `d/${name}`, name, published });
 
@@ -73,5 +73,24 @@ describe("book chapters (no published)", () => {
     // Lock screen ⏮ ⏭ wrap: last chapter → first, first → last.
     expect(neighborNote(items, "d/100 END.md", 1, true)?.name).toBe("17 SEVENTEEN.md");
     expect(neighborNote(items, "d/17 SEVENTEEN.md", -1, true)?.name).toBe("100 END.md");
+  });
+});
+
+describe("bannerInfo", () => {
+  const cover = "https://pi.tedcdn.com/r/talkstar-assets.s3.amazonaws.com/x/y-embed.jpg";
+  it("TED cover goes through the 1200 px resizer; sub joins speaker, date, length", () => {
+    const b = bannerInfo({ cover, title: "AI", speaker: "Paul Bloom", published: "2026-09-30", duration: 734 }, "file");
+    expect(b).toEqual({ src: `${cover}?w=1200`, title: "AI", sub: "Paul Bloom · 2026-09-30 · 12:14" });
+  });
+  it("keeps an existing width / other hosts as is; falls back to file name and author", () => {
+    expect(bannerInfo({ cover: `${cover}?w=320` }, "f")?.src).toBe(`${cover}?w=320`);
+    const b = bannerInfo({ cover: "https://example.test/a.jpg?x=1", author: "PKD" }, "17 SEVENTEEN");
+    expect(b).toEqual({ src: "https://example.test/a.jpg?x=1", title: "17 SEVENTEEN", sub: "PKD" });
+  });
+  it("null without a usable cover", () => {
+    expect(bannerInfo({}, "f")).toBeNull();
+    expect(bannerInfo({ cover: "" }, "f")).toBeNull();
+    expect(bannerInfo({ cover: "javascript:alert(1)" }, "f")).toBeNull();
+    expect(bannerInfo(null, "f")).toBeNull();
   });
 });

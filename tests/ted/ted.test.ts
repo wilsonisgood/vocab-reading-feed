@@ -132,6 +132,14 @@ describe("TedClient", () => {
     expect(calls[1].at - calls[0].at).toBeGreaterThanOrEqual(300);
   });
 
+  it("fetchImages reads cover / thumbnail from the talk page only", async () => {
+    const { client, calls } = setup(routes);
+    const img = await client.fetchImages(SLUG);
+    expect(img.cover).toMatch(/^https:\/\/pi\.tedcdn\.com\/r\/.+\.jpg$/);
+    expect(img.thumbnail).toBe(`${img.cover}?w=320`);
+    expect(calls.map((c) => c.req.url)).toEqual([`https://www.ted.com/talks/${SLUG}`]);
+  });
+
   it("surfaces HTTP errors and does not cache a failed page", async () => {
     let fail = true;
     const { client } = setup((r) => (fail ? { status: 500, text: "" } : routes(r)));

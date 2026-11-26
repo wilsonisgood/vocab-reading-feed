@@ -34,3 +34,6 @@
 - 2026-10-14 TED 沒有英文逐字稿的 talk：全量掃 5278 篇（GraphQL 列表 + 逐篇 talk 頁，1 req/s，約 90 分鐘），
   **204 篇**沒有（3.9%；Beyond the Talk 14 篇，其餘多是對談、表演、多人座談），無法判斷 0 篇。
   清單 → `src/core/ted/noTranscript.json`（METHOD §2.5）；逐篇判決留在 `pipeline/data/ted_transcript.jsonl`（不進 git）。
+- 2026-11-26 TED 圖片（頂部橫幅，METHOD §3.6）：最新 30 篇都有 16x9／4x3／2x1，2016 年的 30 篇都有 16x9／4x3；
+  16x9 原圖 2880×1620 約 220 KB，`?w=1200` → 1200×675 約 65 KB，回 `access-control-allow-origin: *`。
+  桌面實機（CDP）：開啟、捲到底再回頂、同分頁換筆記、非 rf 筆記、無 cover 補抓、壞圖網址都確認；手機未測。

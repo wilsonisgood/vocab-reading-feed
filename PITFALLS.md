@@ -23,3 +23,5 @@
 - 2026-10-14 **hls.js 自帶的型別需要 TS ≥ 5.7**（Uint8Array 泛型），本 repo 釘 TS 5.3.3 → 用 `src/services/player/hls-light.d.ts` 自寫最小型別；升級 TS 後可刪。
 - 2026-10-17 **iOS 鎖定畫面只出現 ±10 秒、沒有 ⏮⏭**：已設 nexttrack／previoustrack 仍被系統預設的 skip 鈕蓋掉
   → 明確 `setActionHandler("seekforward"/"seekbackward"/"seekto", null)`，並在每次開播重新註冊（iPhone 實機確認有效）。
+- 2026-11-26 **閱讀模式 `.markdown-preview-sizer` 裡自己加的子元素會被清掉**（捲到底再回來、同分頁換筆記都會）
+  → 常駐的 UI 掛在 `.mod-header`（它在捲動與換筆記時都留著，所以要自己用 key 判斷是否過期）。

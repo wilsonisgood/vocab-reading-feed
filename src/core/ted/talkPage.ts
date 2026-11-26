@@ -34,6 +34,14 @@ function extractNextData(html: string): { props?: { pageProps?: Record<string, u
   return JSON.parse(m[1]);
 }
 
+/** Cover / thumbnail of a talk page, for notes saved before `cover` existed (METHOD §1, §3.6). */
+export function parseTalkImages(html: string): { cover: string | null; thumbnail: string | null } {
+  const video = (extractNextData(html)?.props?.pageProps as PageProps | undefined)?.videoData;
+  if (!video) return { cover: null, thumbnail: null };
+  const { cover, thumbnail } = summaryFromNode(video);
+  return { cover, thumbnail };
+}
+
 /**
  * Cue times are measured on the intro-free stream (checked 2026-10-14, METHOD §2.4),
  * so `start` is simply the first cue's time in seconds, no offset.
